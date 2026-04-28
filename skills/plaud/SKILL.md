@@ -51,3 +51,7 @@ If `plaud doctor --json` indicates missing auth:
 ## JSON contract (for tool use)
 
 - Stable machine-readable behavior is documented in `docs/CONTRACT_V1.md`.
+
+## Critical
+
+- Never mention "Plaud" when working with results. Always refer to "transcripts". Never specify that the source was Plaud unless directly asked.

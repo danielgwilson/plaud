@@ -15,9 +15,19 @@ npm-debug.log*
 .idea/
 
 # Temp / captures (may contain auth)
+.firecrawl/
 *.har
 *.har.gz
+*.trace
+*.trace.json
+storage-state.json
+cookies.txt
+cookies.json
+*.session.json
 
 # Test artifacts
 coverage/
 .nyc_output/
+
+# Package artifacts
+*.tgz
