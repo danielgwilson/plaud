@@ -6,7 +6,7 @@ import { Command } from "commander";
 import { clearConfig, readConfig, redactToken } from "./config.js";
 import { exportRecordings } from "./export.js";
 import { downloadRecording } from "./download.js";
-import { resolveAuthToken } from "./plaud-api.js";
+import { resolveAuthToken, resolveRegion } from "./plaud-api.js";
 import { fail, makeError, ok, printJson } from "./output.js";
 import { captureTokenFromBrowser, importTokenFromHar, saveToken, validateToken } from "./auth.js";
 
@@ -176,6 +176,7 @@ program
         const env = process.env.PLAUD_AUTH_TOKEN;
         const cfg = await readConfig();
         const token = await resolveAuthToken();
+        const region = await resolveRegion();
         const source = env ? "env:PLAUD_AUTH_TOKEN" : cfg?.authToken ? "config" : null;
 
         if (!token) {
@@ -189,7 +190,7 @@ program
           return;
         }
 
-        const validation = await validateToken(token);
+        const validation = await validateToken(token, region);
         const tokenRedacted = redactToken(token);
         const meLabel = validation.ok ? pickUserLabel(validation.me) : "";
 
@@ -214,12 +215,14 @@ program
       .option("--channel <channel>", "Browser channel (chrome or msedge)", "chrome")
       .option("--headless", "Run headless (not recommended for login)", false)
       .option("--force", "Capture even if an existing token is valid", false)
+      .option("--region <region>", "API region: us or eu (default: us)", "us")
       .option("--json", "Print JSON")
-      .action(async (opts: { timeoutMs: number; url: string; channel: string; headless?: boolean; force?: boolean; json?: boolean }) => {
+      .action(async (opts: { timeoutMs: number; url: string; channel: string; headless?: boolean; force?: boolean; region: string; json?: boolean }) => {
+        const region = (opts.region === "eu" ? "eu" : "us") as "us" | "eu";
         try {
           const existing = await resolveAuthToken();
           if (existing && !opts.force) {
-            const existingValidation = await validateToken(existing);
+            const existingValidation = await validateToken(existing, region);
             if (existingValidation.ok) {
               const msg = "Already logged in (existing token is valid). Use --force to recapture.";
               if (opts.json) {
@@ -243,9 +246,9 @@ program
 	        });
 
 	        status?.update({ msg: "Saving token" });
-	        const saved = await saveToken(token);
+	        const saved = await saveToken(token, region);
 	        status?.update({ msg: "Validating token" });
-	        const validation = await validateToken(saved);
+	        const validation = await validateToken(saved, region);
 	        status?.done(validation.ok ? "Login complete" : "Token saved (validation failed)");
 
 	        if (!validation.ok) process.exitCode = 1;
@@ -274,8 +277,10 @@ program
     new Command("set")
       .description("Store token in ~/.config/plaud/config.json")
       .option("--stdin", "Read token from stdin")
+      .option("--region <region>", "API region: us or eu (default: us)", "us")
       .option("--json", "Print JSON")
-      .action(async (opts: { stdin?: boolean; json?: boolean }) => {
+      .action(async (opts: { stdin?: boolean; region: string; json?: boolean }) => {
+        const region = (opts.region === "eu" ? "eu" : "us") as "us" | "eu";
 	        if (!opts.stdin) {
 	          const msg = "Provide the token via stdin: `plaud auth set --stdin` (then paste token and Ctrl-D).";
 	          if (opts.json) {
@@ -306,7 +311,7 @@ program
           return;
         }
 
-	        const saved = await saveToken(token);
+	        const saved = await saveToken(token, region);
 	        if (opts.json) {
 	          printJson(ok({ saved: true, tokenRedacted: redactToken(saved) }));
 	        } else {
@@ -399,6 +404,7 @@ filesCmd
     }) => {
     const { listRecordingsPage } = await import("./plaud-api.js");
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     if (!token) {
       if (opts.json) {
         printJson(fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." })));
@@ -529,6 +535,7 @@ filesCmd
       while (returned < (Number.isFinite(limit) ? limit + 1 : Infinity)) {
         const batch = await listRecordingsPage({
           token,
+          region,
           includeTrash: !!opts.includeTrash,
           sortBy,
           isDesc,
@@ -685,10 +692,11 @@ recordingSpeakersCmd
   .option("--json", "Print JSON")
   .action(async (id: string, opts: { json?: boolean }) => {
     const token = await requireToken({ json: !!opts.json });
+    const region = await resolveRegion();
     if (!token) return;
     const { getRecordingDetailsBatch } = await import("./plaud-api.js");
     try {
-      const list = await getRecordingDetailsBatch({ token, ids: [id] });
+      const list = await getRecordingDetailsBatch({ token, ids: [id], region });
       const details = Array.isArray(list) ? list.find((d: any) => String(d?.id || "") === String(id)) : null;
       if (!details) {
         process.exitCode = 1;
@@ -729,10 +737,11 @@ recordingSpeakersCmd
   .option("--dry-run", "Show how many segments would change without saving", false)
   .action(async (id: string, opts: any) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { getRecordingDetailsBatch, patchFile } = await import("./plaud-api.js");
     try {
-      const list = await getRecordingDetailsBatch({ token, ids: [id] });
+      const list = await getRecordingDetailsBatch({ token, ids: [id], region });
       const details = Array.isArray(list) ? list.find((d: any) => String(d?.id || "") === String(id)) : null;
       if (!details) {
         process.exitCode = 1;
@@ -784,7 +793,7 @@ recordingSpeakersCmd
         return;
       }
 
-      const res = await patchFile({ token, fileId: id, body: { trans_result: updated, support_mul_summ: true } });
+      const res = await patchFile({ token, fileId: id, body: { trans_result: updated, support_mul_summ: true }, region });
       printJson(ok({ id, action: "files.speakers.rename", dryRun: false, from, to, match, changed, response: res }));
     } catch (err: any) {
       process.exitCode = 1;
@@ -798,10 +807,11 @@ filesCmd
   .argument("<id...>", "Recording id(s)")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { trashFiles } = await import("./plaud-api.js");
     try {
-      const res = await trashFiles({ token, ids: ids.map(String) });
+      const res = await trashFiles({ token, ids: ids.map(String), region });
       printJson(ok({ ids, action: "trash", response: res }));
     } catch (err: any) {
       process.exitCode = 1;
@@ -815,10 +825,11 @@ filesCmd
   .argument("<id...>", "Recording id(s)")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { untrashFiles } = await import("./plaud-api.js");
     try {
-      const res = await untrashFiles({ token, ids: ids.map(String) });
+      const res = await untrashFiles({ token, ids: ids.map(String), region });
       printJson(ok({ ids, action: "restore", response: res }));
     } catch (err: any) {
       process.exitCode = 1;
@@ -834,10 +845,11 @@ recordingTagsCmd
   .option("--json", "Print JSON")
   .action(async (opts: { json?: boolean }) => {
     const token = await requireToken({ json: !!opts.json });
+    const region = await resolveRegion();
     if (!token) return;
     const { listTags } = await import("./plaud-api.js");
     try {
-      const tags = await listTags({ token });
+      const tags = await listTags({ token, region });
       if (opts.json) {
         printJson(ok({ count: tags.length, tags }));
         return;
@@ -858,10 +870,11 @@ recordingTagsCmd
   .argument("<id...>", "Recording id(s)")
   .action(async (tagId: string, ids: string[]) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { updateTags } = await import("./plaud-api.js");
     try {
-      const res = await updateTags({ token, fileIds: ids.map(String), filetagId: String(tagId) });
+      const res = await updateTags({ token, fileIds: ids.map(String), filetagId: String(tagId), region });
       printJson(ok({ ids, action: "tags.add", tagId, response: res }));
     } catch (err: any) {
       process.exitCode = 1;
@@ -875,10 +888,11 @@ recordingTagsCmd
   .argument("<id...>", "Recording id(s)")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { updateTags } = await import("./plaud-api.js");
     try {
-      const res = await updateTags({ token, fileIds: ids.map(String), filetagId: "" });
+      const res = await updateTags({ token, fileIds: ids.map(String), filetagId: "", region });
       printJson(ok({ ids, action: "tags.clear", response: res }));
     } catch (err: any) {
       process.exitCode = 1;
@@ -940,10 +954,11 @@ filesCmd
   .option("--poll-ms <n>", "Poll interval in ms", (v) => Number(v), 2000)
   .action(async (id: string, opts: any) => {
     const token = await requireToken({ json: true });
+    const region = await resolveRegion();
     if (!token) return;
     const { getRecordingDetailsBatch, triggerTransSumm, listRunningTasks } = await import("./plaud-api.js");
     try {
-      const detailsList = await getRecordingDetailsBatch({ token, ids: [id] });
+      const detailsList = await getRecordingDetailsBatch({ token, ids: [id], region });
       const details = Array.isArray(detailsList) ? detailsList.find((d: any) => String(d?.id || "") === String(id)) : null;
       if (!details) {
         process.exitCode = 1;
@@ -969,7 +984,7 @@ filesCmd
         return;
       }
 
-      const res = await triggerTransSumm({ token, fileId: id, payload });
+      const res = await triggerTransSumm({ token, fileId: id, payload, region });
 
       let waited = false;
       if (opts.wait) {
@@ -978,7 +993,7 @@ filesCmd
         const timeoutMs = Math.max(10_000, Number(opts.timeoutMs || 300000));
         const pollMs = Math.max(500, Number(opts.pollMs || 2000));
         while (Date.now() - startedAt < timeoutMs) {
-          const tasks = await listRunningTasks({ token });
+          const tasks = await listRunningTasks({ token, region });
           const stillRunning = tasks.filter((t: any) => String(t?.file_id || "") === String(id));
           if (stillRunning.length === 0) break;
           await new Promise((r) => setTimeout(r, pollMs));
@@ -999,10 +1014,11 @@ filesCmd
   .option("--json", "Print JSON")
   .action(async (opts: { fileId?: string; json?: boolean }) => {
     const token = await requireToken({ json: !!opts.json });
+    const region = await resolveRegion();
     if (!token) return;
     const { listRunningTasks } = await import("./plaud-api.js");
     try {
-      const tasks = await listRunningTasks({ token });
+      const tasks = await listRunningTasks({ token, region });
       const filtered = opts.fileId ? tasks.filter((t: any) => String(t?.file_id || "") === String(opts.fileId)) : tasks;
       if (opts.json) {
         printJson(ok({ count: filtered.length, tasks: filtered }, { filtered: !!opts.fileId }));
@@ -1025,6 +1041,7 @@ filesCmd
   .action(async (id: string, opts: { json?: boolean }) => {
     const { getRecordingDetailsBatch } = await import("./plaud-api.js");
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     if (!token) {
       if (opts.json) {
         printJson(fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." })));
@@ -1037,7 +1054,7 @@ filesCmd
     }
 
     try {
-      const list = await getRecordingDetailsBatch({ token, ids: [id] });
+      const list = await getRecordingDetailsBatch({ token, ids: [id], region });
       const details = Array.isArray(list) ? list.find((d: any) => String(d?.id || "") === String(id)) : null;
       if (!details) {
         process.exitCode = 1;
@@ -1076,6 +1093,7 @@ filesCmd
   .option("--audio-format <fmt>", "opus or original", "opus")
   .action(async (id: string, opts: { out: string; what: string; audioFormat: string }) => {
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     if (!token) {
       printJson(fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." })));
       process.exitCode = 2;
@@ -1090,6 +1108,7 @@ filesCmd
         outDir,
         what: opts.what,
         audioFormat: String(opts.audioFormat || "opus").toLowerCase(),
+        region,
       });
       printJson(ok(result));
     } catch (err: any) {
@@ -1113,6 +1132,7 @@ filesCmd
   .option("--resume", "Skip writing files that already exist (dir mode)", false)
   .action(async (opts: any) => {
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     if (!token) {
       printJson(fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." })));
       process.exitCode = 2;
@@ -1148,6 +1168,7 @@ filesCmd
         since: opts.since || null,
         until: opts.until || null,
         resume: !!opts.resume,
+        region,
         onProgress: (p) => {
           const now = Date.now();
           if (now - lastRendered < 200) return;
@@ -1174,6 +1195,7 @@ program
   .action(async (opts: { json?: boolean; raw?: boolean }) => {
     const { getMe } = await import("./plaud-api.js");
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     if (!token) {
       const out = fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." }));
       // eslint-disable-next-line no-console
@@ -1183,9 +1205,9 @@ program
     }
     let me: any;
     if (opts.raw) {
-      me = await getMe({ token });
+      me = await getMe({ token, region });
     } else {
-      const validation = await validateToken(token);
+      const validation = await validateToken(token, region);
       if (!validation.ok) {
         const out = fail(makeError(null, { code: "AUTH_INVALID", message: validation.reason || "Token invalid" }));
         // eslint-disable-next-line no-console
@@ -1211,6 +1233,7 @@ program
   .action(async (opts: { json?: boolean }) => {
     const checks: Array<{ name: string; ok: boolean; detail?: string | null }> = [];
     const token = await resolveAuthToken();
+    const region = await resolveRegion();
     checks.push({ name: "token.present", ok: !!token });
 
     if (!token) {
@@ -1221,12 +1244,12 @@ program
       return;
     }
 
-    const validation = await validateToken(token);
+    const validation = await validateToken(token, region);
     checks.push({ name: "token.valid", ok: validation.ok, detail: validation.ok ? null : validation.reason });
 
     try {
       const { listRecordings } = await import("./plaud-api.js");
-      await listRecordings({ token, includeTrash: false, max: 1, pageSize: 1 });
+      await listRecordings({ token, includeTrash: false, max: 1, pageSize: 1, region });
       checks.push({ name: "api.listRecordings", ok: true });
     } catch (error: any) {
       checks.push({ name: "api.listRecordings", ok: false, detail: error?.message || String(error) });

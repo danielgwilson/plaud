@@ -57,6 +57,7 @@ export async function exportRecordings({
   since,
   until,
   resume = false,
+  region = "us",
   onProgress,
 }: {
   token: string;
@@ -70,12 +71,13 @@ export async function exportRecordings({
   since?: string | null;
   until?: string | null;
   resume?: boolean;
+  region?: "us" | "eu";
   onProgress?: (p: ExportProgress) => void;
 }): Promise<ExportSummary> {
   const sinceDate = parseIsoDate(since || null);
   const untilDate = parseIsoDate(until || null);
 
-  const recordings = await listRecordings({ token, includeTrash, max });
+  const recordings = await listRecordings({ token, includeTrash, max, region });
   const filtered = recordings.filter((r) => {
     const ts = r?.start_time || r?.edit_time;
     if (!ts) return true;
@@ -108,13 +110,13 @@ export async function exportRecordings({
     const ids = batch.map((f) => f.id).filter(Boolean) as string[];
     let detailsList: any[] = [];
     try {
-      detailsList = await getRecordingDetailsBatch({ token, ids });
+      detailsList = await getRecordingDetailsBatch({ token, ids, region });
     } catch {
       // If the batch call fails, fall back to single-id requests for this batch.
       detailsList = [];
       for (const id of ids) {
         try {
-          const single = await getRecordingDetailsBatch({ token, ids: [id] });
+          const single = await getRecordingDetailsBatch({ token, ids: [id], region });
           detailsList.push(...single);
         } catch {
           // leave missing

@@ -4,6 +4,7 @@ import path from "node:path";
 
 export type PlaudConfig = {
   authToken?: string;
+  region?: "us" | "eu";
 };
 
 function getConfigDir(): string {

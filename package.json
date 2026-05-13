@@ -1,7 +1,7 @@
 {
-  "name": "plaud",
+  "name": "@umelainteligence.cz/plaud",
   "version": "0.1.6",
-  "description": "Agent-first CLI + skill to export/download Plaud recordings (transcripts, summaries, audio)",
+  "description": "Agent-first CLI + skill to export/download Plaud recordings (transcripts, summaries, audio). Fork of danielgwilson/plaud with EU region support.",
   "license": "MIT",
   "author": "Daniel G Wilson",
   "type": "module",
@@ -16,12 +16,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/danielgwilson/plaud.git"
+    "url": "git+https://github.com/Umelainteligence-cz/plaud.git"
   },
   "bugs": {
-    "url": "https://github.com/danielgwilson/plaud/issues"
+    "url": "https://github.com/Umelainteligence-cz/plaud/issues"
   },
-  "homepage": "https://github.com/danielgwilson/plaud#readme",
+  "homepage": "https://github.com/Umelainteligence-cz/plaud#readme",
   "publishConfig": {
     "access": "public"
   },

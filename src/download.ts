@@ -38,8 +38,8 @@ async function streamToFile({
   }
 }
 
-async function getDetails({ token, id }: { token: string; id: string }): Promise<any> {
-  const list = await getRecordingDetailsBatch({ token, ids: [id] });
+async function getDetails({ token, id, region = "us" }: { token: string; id: string; region?: "us" | "eu" }): Promise<any> {
+  const list = await getRecordingDetailsBatch({ token, ids: [id], region });
   const details = Array.isArray(list) ? list.find((d) => String(d?.id || "") === String(id)) : null;
   if (!details) throw new Error("Recording not found (or details unavailable)");
   return details;
@@ -59,19 +59,21 @@ export async function downloadRecording({
   outDir,
   what = "transcript,summary,json",
   audioFormat = "opus",
+  region = "us",
 }: {
   token: string;
   id: string;
   outDir: string;
   what?: string;
   audioFormat?: string;
+  region?: "us" | "eu";
 }): Promise<{ id: string; outDir: string; written: Array<Record<string, unknown>> }> {
   if (!token) throw new Error("Missing token");
   if (!id) throw new Error("Missing id");
   if (!outDir) throw new Error("Missing outDir");
 
   const whatSet = parseWhat(what);
-  const details = await getDetails({ token, id });
+  const details = await getDetails({ token, id, region });
   const baseFilename = getFilenameWithDate(details?.filename, { id }, details);
   const written: Array<Record<string, unknown>> = [];
 
@@ -98,7 +100,7 @@ export async function downloadRecording({
   }
 
   if (whatSet.has("audio")) {
-    const temp = await getRecordingTempUrls({ token, id });
+    const temp = await getRecordingTempUrls({ token, id, region });
     const tempUrl = audioFormat === "original" ? temp?.temp_url : temp?.temp_url_opus || temp?.temp_url;
     if (!tempUrl) throw new Error("Audio temp URL not available for this recording");
 

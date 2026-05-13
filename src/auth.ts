@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { writeConfig } from "./config.js";
+import { readConfig, writeConfig } from "./config.js";
 import { getMe } from "./plaud-api.js";
 
 export type StatusUpdate = { msg: string; elapsedMs: number };
@@ -71,20 +71,22 @@ function sanitizeMe(me: any): SanitizedMe | null {
 
 export async function validateToken(
   token: string,
+  region: "us" | "eu" = "us",
 ): Promise<{ ok: true; me: SanitizedMe | null } | { ok: false; reason: string }> {
   if (!token) return { ok: false, reason: "missing" };
   try {
-    const me = await getMe({ token });
+    const me = await getMe({ token, region });
     return { ok: true, me: sanitizeMe(me) };
   } catch (error: any) {
     return { ok: false, reason: error?.message || "invalid" };
   }
 }
 
-export async function saveToken(token: string): Promise<string> {
+export async function saveToken(token: string, region?: "us" | "eu"): Promise<string> {
   const clean = cleanToken(token);
   if (!isProbablyJwt(clean)) throw new Error("Invalid token format");
-  await writeConfig({ authToken: clean });
+  const existing = await readConfig();
+  await writeConfig({ ...existing, authToken: clean, ...(region ? { region } : {}) });
   return clean;
 }
 
