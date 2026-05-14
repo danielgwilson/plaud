@@ -117,6 +117,7 @@ Success:
 
 Notes:
 - This flow opens a browser and captures a Plaud bearer token from an authenticated request to `api.plaud.ai`.
+- Plaud's private web API may reject non-browser request fingerprints at the edge. The CLI intentionally sends browser-like request headers, including a web user-agent, so valid tokens continue to behave like Plaud web-app requests.
 
 ### `plaud auth set --json`
 

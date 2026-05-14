@@ -1,6 +1,6 @@
 {
   "name": "plaud",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Agent-first CLI + skill to export/download Plaud recordings (transcripts, summaries, audio)",
   "license": "MIT",
   "author": "Daniel G Wilson",

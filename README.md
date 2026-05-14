@@ -9,6 +9,8 @@ Export all your Plaud recordings with speaker-labeled transcripts and optional A
 
 This is an **unofficial** project (not affiliated with Plaud). It uses a captured Plaud bearer token and private web endpoints, so it may break if Plaud changes their web app.
 
+Operational note: Plaud's private web API may reject non-browser request fingerprints at the edge even when the bearer token is valid. The CLI sends browser-like request headers, including a web user-agent, to match Plaud's web app requests.
+
 Security note: **do not** share tokens or `*.har` files (HARs often contain `Authorization` headers).
 
 ## Terminology
