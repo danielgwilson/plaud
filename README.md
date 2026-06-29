@@ -5,6 +5,20 @@
 
 Export all your Plaud recordings with speaker-labeled transcripts and optional AI summaries.
 
+## Official Plaud Tools Exist Now
+
+Plaud now ships official tooling. For supported auth and general terminal use, start with Plaud's official CLI:
+
+```bash
+npm install -g @plaud-ai/cli
+```
+
+Official docs:
+- [Plaud CLI](https://docs.plaud.ai/plaud-mcp-cli/cli)
+- [Plaud MCP](https://docs.plaud.ai/plaud-mcp-cli/mcp)
+
+This package remains an **unofficial advanced exporter** for JSON-first and bulk workflows that Plaud's official CLI does not yet cover. Use it when you specifically need stable machine-readable output, bulk transcript/summary export, ZIP export, or the packaged agent skill.
+
 ## Disclaimer
 
 This is an **unofficial** project (not affiliated with Plaud). It uses a captured Plaud bearer token and private web endpoints, so it may break if Plaud changes their web app.
