@@ -4,11 +4,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  clearStore,
   findDuplicateGroups,
   loadStoreIndex,
   putRecordingSnapshot,
   resolveStorePaths,
   searchStore,
+  StoreClearSafetyError,
   verifyStore,
 } from "../src/store.js";
 
@@ -68,7 +70,7 @@ test("local store keeps rename as a new snapshot while reusing transcript conten
   });
 });
 
-test("local search returns current snapshots from synthetic transcript content", async () => {
+test("local search returns current snapshots without snippets by default", async () => {
   await withTempStore(async (storeDir) => {
     const paths = resolveStorePaths(storeDir);
     const first = recording({ id: "rec_1", name: "Board prep", content: "Discuss fundraising plan." });
@@ -81,6 +83,19 @@ test("local search returns current snapshots from synthetic transcript content",
     assert.equal(result.totalIndexed, 2);
     assert.equal(result.items.length, 1);
     assert.equal(result.items[0].id, "rec_1");
+    assert.equal(result.items[0].snippet, null);
+  });
+});
+
+test("local search includes snippets only when requested", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Board prep", content: "Discuss fundraising plan." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+
+    const result = await searchStore({ paths, query: "fundraising", limit: 5, includeSnippets: true });
+
+    assert.equal(result.items.length, 1);
     assert.match(result.items[0].snippet || "", /fundraising/i);
   });
 });
@@ -104,5 +119,30 @@ test("duplicate groups can be reported by normalized transcript text", async () 
       ["rec_1", "rec_2"],
     );
     assert.equal(verify.ok, true);
+  });
+});
+
+test("clearStore refuses non-store directories unless explicitly overridden", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    await fs.mkdir(storeDir, { recursive: true });
+
+    await assert.rejects(() => clearStore(paths), StoreClearSafetyError);
+
+    const result = await clearStore(paths, { allowUnsafeMissingIndex: true });
+    assert.equal(result.removed, true);
+  });
+});
+
+test("clearStore can remove an indexed local store", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Board prep", content: "Discuss fundraising plan." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+
+    const result = await clearStore(paths);
+
+    assert.equal(result.removed, true);
+    await assert.rejects(() => fs.stat(storeDir));
   });
 });
