@@ -103,3 +103,46 @@ test("files speakers list --json returns v1 envelope on missing auth (exit 2)", 
     assert.equal(parsed.error.code, "AUTH_MISSING");
   });
 });
+
+test("store status --json works without auth", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["store", "status", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.data.recordings, 0);
+    assert.equal(parsed.data.snapshots, 0);
+  });
+});
+
+test("files search requires a query or --all", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "search"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "VALIDATION");
+  });
+});
+
+test("files sync returns v1 envelope on missing auth (exit 2)", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "sync", "--max", "1"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "AUTH_MISSING");
+  });
+});

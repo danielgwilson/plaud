@@ -9,6 +9,16 @@ import { downloadRecording } from "./download.js";
 import { resolveAuthToken } from "./plaud-api.js";
 import { fail, makeError, ok, printJson } from "./output.js";
 import { captureTokenFromBrowser, importTokenFromHar, saveToken, validateToken } from "./auth.js";
+import {
+  clearStore,
+  findDuplicateGroups,
+  getStoreStatus,
+  parseStoreWhat,
+  putRecordingSnapshot,
+  resolveStorePaths,
+  searchStore,
+  verifyStore,
+} from "./store.js";
 
 function getCliVersion(): string {
   try {
@@ -366,6 +376,206 @@ function normalizeMatchMode(value: unknown): "original" | "speaker" | "both" {
   if (v === "speaker" || v === "display") return "speaker";
   return "both";
 }
+
+function parseStoreDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const v = String(value).trim();
+  if (!v) return null;
+  const d = new Date(v.length === 10 ? `${v}T00:00:00` : v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fileTimeMs(file: any): number | null {
+  const created = Number(file?.start_time);
+  if (Number.isFinite(created)) return created;
+  const edited = Number(file?.edit_time);
+  if (Number.isFinite(edited)) return edited;
+  return null;
+}
+
+function fileMatchesStoreWindow(file: any, since: Date | null, until: Date | null): boolean {
+  const ms = fileTimeMs(file);
+  if (!ms) return true;
+  if (since && ms < since.getTime()) return false;
+  if (until && ms > until.getTime()) return false;
+  return true;
+}
+
+filesCmd
+  .command("sync")
+  .description("Sync file details into the local content-addressed store")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--include-trash", "Include trashed files", false)
+  .option("--max <n>", "Max files to scan (default: all)", (v) => Number(v))
+  .option("--since <iso>", "Only sync files on/after this date (ISO string or YYYY-MM-DD)")
+  .option("--until <iso>", "Only sync files on/before this date (ISO string or YYYY-MM-DD)")
+  .option("--what <list>", "Comma-separated: json,transcript,summary", "json,transcript,summary")
+  .option("--batch-size <n>", "IDs per details request (auto-fallback to 1 on failure)", (v) => Number(v), 10)
+  .option("--delay-ms <n>", "Delay between batches (ms)", (v) => Number(v), 250)
+  .action(async (opts: any) => {
+    const token = await resolveAuthToken();
+    if (!token) {
+      printJson(fail(makeError(null, { code: "AUTH_MISSING", message: "No auth token. Run `plaud auth login`." })));
+      process.exitCode = 2;
+      return;
+    }
+
+    const sinceDate = parseStoreDate(opts.since);
+    const untilDate = parseStoreDate(opts.until);
+    if ((opts.since && !sinceDate) || (opts.until && !untilDate)) {
+      process.exitCode = 2;
+      printJson(
+        fail(
+          makeError(null, {
+            code: "VALIDATION",
+            message: "Invalid date. Use YYYY-MM-DD or ISO-8601 for --since/--until.",
+          }),
+        ),
+      );
+      return;
+    }
+
+    try {
+      const { getRecordingDetailsBatch, listRecordings } = await import("./plaud-api.js");
+      const storePaths = resolveStorePaths(opts.store || null);
+      const what = parseStoreWhat(opts.what);
+      const max = Number.isFinite(opts.max) ? Number(opts.max) : Infinity;
+      const batchSize = Math.max(1, Number(opts.batchSize || 10));
+      const delayMs = Math.max(0, Number(opts.delayMs || 0));
+      const recordings = await listRecordings({ token, includeTrash: !!opts.includeTrash, max });
+      const filtered = recordings.filter((file) => fileMatchesStoreWindow(file, sinceDate, untilDate));
+      const failed: Array<{ id: string; error: string }> = [];
+      let changed = 0;
+      let unchanged = 0;
+      let currentChanged = 0;
+      let blobWrites = 0;
+
+      const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      for (let i = 0; i < filtered.length; i += batchSize) {
+        const batch = filtered.slice(i, i + batchSize);
+        const ids = batch.map((file) => String(file?.id || "")).filter(Boolean);
+        let detailsList: any[] = [];
+        try {
+          detailsList = await getRecordingDetailsBatch({ token, ids });
+        } catch {
+          detailsList = [];
+          for (const id of ids) {
+            try {
+              const single = await getRecordingDetailsBatch({ token, ids: [id] });
+              detailsList.push(...single);
+            } catch (err: any) {
+              failed.push({ id, error: err?.message || "details request failed" });
+            }
+          }
+        }
+
+        const detailsById = new Map(detailsList.map((details) => [String(details?.id || ""), details]));
+        for (const file of batch) {
+          const id = String(file?.id || "");
+          if (!id) continue;
+          const details = detailsById.get(id);
+          if (!details) {
+            failed.push({ id, error: "details unavailable" });
+            continue;
+          }
+          const result = await putRecordingSnapshot({ paths: storePaths, file, details, what });
+          if (result.changed) changed += 1;
+          else unchanged += 1;
+          if (result.currentChanged) currentChanged += 1;
+          blobWrites += result.blobWrites;
+        }
+
+        // eslint-disable-next-line no-console
+        console.error(`[plaud] synced ${Math.min(i + batch.length, filtered.length)}/${filtered.length}`);
+        if (delayMs > 0 && i + batchSize < filtered.length) await sleep(delayMs);
+      }
+
+      const status = await getStoreStatus(storePaths);
+      printJson(
+        ok(
+          {
+            storeDir: storePaths.root,
+            scanned: recordings.length,
+            selected: filtered.length,
+            changed,
+            unchanged,
+            currentChanged,
+            blobWrites,
+            failed,
+            status,
+          },
+          { includeTrash: !!opts.includeTrash, what },
+        ),
+      );
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+filesCmd
+  .command("search")
+  .description("Search the local store without calling Plaud")
+  .argument("[query]", "Search query")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--limit <n>", "Max results", (v) => Number(v), 20)
+  .option("--from <iso>", "Only include files on/after this date (YYYY-MM-DD or ISO-8601)")
+  .option("--to <iso>", "Only include files on/before this date (YYYY-MM-DD or ISO-8601)")
+  .option("--all", "List newest local records when no query is provided", false)
+  .option("--all-snapshots", "Search historical snapshots, not only current snapshots", false)
+  .action(async (query: string | undefined, opts: any) => {
+    if (!opts.all && !String(query || "").trim()) {
+      process.exitCode = 2;
+      printJson(
+        fail(
+          makeError(null, {
+            code: "VALIDATION",
+            message: "Provide a query or pass --all to list local records.",
+          }),
+        ),
+      );
+      return;
+    }
+
+    try {
+      const storePaths = resolveStorePaths(opts.store || null);
+      const result = await searchStore({
+        paths: storePaths,
+        query,
+        limit: Math.max(0, Number(opts.limit || 20)),
+        from: opts.from,
+        to: opts.to,
+        includeAllSnapshots: !!opts.allSnapshots,
+        listAll: !!opts.all,
+      });
+      printJson(ok(result, { localOnly: true }));
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+filesCmd
+  .command("dupes")
+  .description("Find duplicate groups in the local store")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--by <field>", "snapshot|metadata|details|transcript|text|summary|content", "content")
+  .option("--all-snapshots", "Include historical snapshots, not only current snapshots", false)
+  .action(async (opts: any) => {
+    try {
+      const storePaths = resolveStorePaths(opts.store || null);
+      const result = await findDuplicateGroups({
+        paths: storePaths,
+        by: String(opts.by || "content"),
+        includeAllSnapshots: !!opts.allSnapshots,
+      });
+      printJson(ok(result, { localOnly: true }));
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
 
 filesCmd
   .command("list")
@@ -1160,6 +1370,89 @@ filesCmd
       // eslint-disable-next-line no-console
       process.stderr.write("\n");
       printJson(ok(summary));
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+const storeCmd = program.command("store").description("Inspect and maintain the local Plaud store");
+
+storeCmd
+  .command("path")
+  .description("Print the local store path")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--json", "Print JSON")
+  .action(async (opts: { store?: string; json?: boolean }) => {
+    const storePaths = resolveStorePaths(opts.store || null);
+    if (opts.json) {
+      printJson(ok({ storeDir: storePaths.root }));
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log(storePaths.root);
+  });
+
+storeCmd
+  .command("status")
+  .description("Summarize the local store")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--json", "Print JSON")
+  .action(async (opts: { store?: string; json?: boolean }) => {
+    try {
+      const storePaths = resolveStorePaths(opts.store || null);
+      const status = await getStoreStatus(storePaths);
+      if (opts.json) {
+        printJson(ok(status));
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.log(`${status.recordings} recordings, ${status.snapshots} snapshots, ${status.blobs} blobs`);
+      // eslint-disable-next-line no-console
+      console.log(status.storeDir);
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+storeCmd
+  .command("verify")
+  .description("Verify local store index references")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .action(async (opts: { store?: string }) => {
+    try {
+      const storePaths = resolveStorePaths(opts.store || null);
+      const result = await verifyStore(storePaths);
+      if (!result.ok) process.exitCode = 1;
+      printJson(ok(result));
+    } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+storeCmd
+  .command("clear")
+  .description("Delete the local store")
+  .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
+  .option("--yes", "Confirm deletion", false)
+  .action(async (opts: { store?: string; yes?: boolean }) => {
+    if (!opts.yes) {
+      process.exitCode = 2;
+      printJson(
+        fail(
+          makeError(null, {
+            code: "CONFIRMATION_REQUIRED",
+            message: "Pass --yes to delete the local store.",
+          }),
+        ),
+      );
+      return;
+    }
+    try {
+      const storePaths = resolveStorePaths(opts.store || null);
+      printJson(ok(await clearStore(storePaths)));
     } catch (err: any) {
       process.exitCode = 1;
       printJson(fail(makeError(err)));
