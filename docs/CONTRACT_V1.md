@@ -274,6 +274,7 @@ Success:
 
 Notes:
 - Sync writes a private local store outside the current working directory by default.
+- Sync stores readable local JSON details, transcript text, and summary text unless narrowed with `--what`.
 - A metadata edit such as a rename creates a new snapshot.
 - Unchanged transcript/summary content reuses existing content-addressed blobs.
 
@@ -295,18 +296,28 @@ Success:
         "createdAt": "2026-01-01T00:00:00.000Z",
         "modifiedAt": "2026-01-01T00:00:00.000Z",
         "durationMs": 1234,
-        "snippet": "Synthetic transcript snippet...",
+        "snippet": null,
         "hashes": { "snapshot": "sha256...", "metadata": "sha256...", "details": "sha256..." }
       }
     ]
   },
-  "meta": { "localOnly": true }
+  "meta": { "localOnly": true, "snippets": false }
 }
 ```
+
+Notes:
+- Search is metadata-only by default.
+- Pass `--snippets` to include snippets from local transcript/summary content.
+- Pass `--ids-only` for compact agent-safe result lists.
 
 Failure when no query is provided:
 ```json
 { "ok": false, "error": { "code": "VALIDATION", "message": "Provide a query or pass --all to list local records.", "retryable": false } }
+```
+
+Failure when a date filter is invalid:
+```json
+{ "ok": false, "error": { "code": "VALIDATION", "message": "Invalid --from date. Use YYYY-MM-DD or ISO-8601.", "retryable": false } }
 ```
 
 ### `plaud files dupes`
@@ -330,6 +341,11 @@ Success:
 }
 ```
 
+Failure when `--by` is invalid:
+```json
+{ "ok": false, "error": { "code": "VALIDATION", "message": "Invalid --by value \"bogus\". Use snapshot, metadata, details, transcript, text, summary, or content.", "retryable": false } }
+```
+
 ### `plaud store status --json`
 
 Success:
@@ -350,6 +366,10 @@ Success:
 ```json
 { "ok": true, "data": { "storeDir": "/abs/store", "removed": true } }
 ```
+
+Notes:
+- `store clear` refuses filesystem root, home-directory parents, and current-working-directory parents.
+- Existing custom store directories must contain a Plaud store index unless `--i-understand-this-deletes-arbitrary-path` is passed.
 
 ### `plaud files trash <id...>`
 

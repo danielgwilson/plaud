@@ -128,11 +128,12 @@ plaud files download <id> --out ./plaud-download --what audio --audio-format opu
 
 ## Local Store, Search, and De-Dupe
 
-For larger libraries, sync file details into a private local store. The store is local-only, content-addressed, and kept outside the current working directory by default.
+For larger libraries, sync file details into a private local store. The store is local-only, content-addressed, and kept outside the current working directory by default. By default, sync stores readable JSON details, transcripts, and summaries on your machine with restrictive file permissions.
 
 ```bash
 plaud files sync
 plaud files search "project kickoff"
+plaud files search "project kickoff" --snippets
 plaud files dupes --by content
 plaud store status
 plaud store path
@@ -152,7 +153,9 @@ De-dupe is intentionally conservative:
 - `plaud files dupes --by content` groups matching transcript/summary content
 - `plaud files dupes --by snapshot` only groups fully identical snapshots
 
-Use `plaud store clear --yes` to delete the local store. This never clears Plaud cloud data.
+Search results are metadata-only by default. Pass `--snippets` only when you want transcript/summary excerpts in stdout. Use `--ids-only` for compact agent-safe result lists.
+
+Use `plaud store clear --yes` to delete the local store. This never clears Plaud cloud data, and the command refuses dangerous paths such as `/`, your home directory, and the current working directory.
 
 Notes:
 - `plaud files export` prints a JSON summary to stdout; progress goes to stderr.

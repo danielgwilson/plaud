@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import envPaths from "env-paths";
 import MiniSearch from "minisearch";
@@ -111,6 +112,13 @@ export type SearchResult = {
   snippet: string | null;
   hashes: SnapshotEntry["hashes"];
 };
+
+export class StoreClearSafetyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StoreClearSafetyError";
+  }
+}
 
 function defaultStoreRoot(): string {
   const paths = envPaths("plaud", { suffix: "" });
@@ -546,6 +554,7 @@ export async function searchStore({
   to,
   includeAllSnapshots = false,
   listAll = false,
+  includeSnippets = false,
 }: {
   paths: StorePaths;
   query?: string;
@@ -554,6 +563,7 @@ export async function searchStore({
   to?: string;
   includeAllSnapshots?: boolean;
   listAll?: boolean;
+  includeSnippets?: boolean;
 }): Promise<{ items: SearchResult[]; totalIndexed: number; storeDir: string }> {
   const index = await loadStoreIndex(paths);
   const fromMs = parseDateMs(from);
@@ -580,7 +590,7 @@ export async function searchStore({
           createdAt: doc.createdAt,
           modifiedAt: doc.modifiedAt,
           durationMs: doc.durationMs,
-          snippet: makeSnippet(doc, doc.name),
+          snippet: includeSnippets ? makeSnippet(doc, doc.name) : null,
           hashes: snapshot.hashes,
         };
       }),
@@ -609,7 +619,7 @@ export async function searchStore({
           createdAt: doc.createdAt,
           modifiedAt: doc.modifiedAt,
           durationMs: doc.durationMs,
-          snippet: makeSnippet(doc, query),
+          snippet: includeSnippets ? makeSnippet(doc, query) : null,
           hashes: snapshot.hashes,
         };
       })
@@ -707,7 +717,59 @@ export async function verifyStore(paths: StorePaths) {
   };
 }
 
-export async function clearStore(paths: StorePaths): Promise<{ storeDir: string; removed: boolean }> {
-  await fs.rm(paths.root, { recursive: true, force: true });
-  return { storeDir: paths.root, removed: true };
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === "" || (!!rel && !rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+async function hasStoreIndex(paths: StorePaths): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(paths.indexPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed?.version === STORE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+export async function clearStore(
+  paths: StorePaths,
+  opts: { allowUnsafeMissingIndex?: boolean } = {},
+): Promise<{ storeDir: string; removed: boolean }> {
+  const root = path.resolve(paths.root);
+  const fsRoot = path.parse(root).root;
+  const home = path.resolve(os.homedir());
+  const cwd = path.resolve(process.cwd());
+
+  if (root === fsRoot) {
+    throw new StoreClearSafetyError("Refusing to clear filesystem root.");
+  }
+  if (root === home || containsPath(root, home)) {
+    throw new StoreClearSafetyError("Refusing to clear a home directory or one of its parents.");
+  }
+  if (root === cwd || containsPath(root, cwd)) {
+    throw new StoreClearSafetyError("Refusing to clear the current working directory or one of its parents.");
+  }
+
+  if (!(await pathExists(root))) {
+    return { storeDir: root, removed: false };
+  }
+
+  if (!(await hasStoreIndex(paths)) && !opts.allowUnsafeMissingIndex) {
+    throw new StoreClearSafetyError(
+      "Refusing to clear a directory without a Plaud store index. Pass --i-understand-this-deletes-arbitrary-path to override.",
+    );
+  }
+
+  await fs.rm(root, { recursive: true, force: true });
+  return { storeDir: root, removed: true };
 }

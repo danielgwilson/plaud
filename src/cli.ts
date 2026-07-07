@@ -17,6 +17,7 @@ import {
   putRecordingSnapshot,
   resolveStorePaths,
   searchStore,
+  StoreClearSafetyError,
   verifyStore,
 } from "./store.js";
 
@@ -385,6 +386,20 @@ function parseStoreDate(value: string | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+function printValidation(message: string): void {
+  process.exitCode = 2;
+  printJson(fail(makeError(null, { code: "VALIDATION", message })));
+}
+
+function validateStoreDateFlag(value: string | undefined, flag: string): boolean {
+  if (!value) return true;
+  if (parseStoreDate(value)) return true;
+  printValidation(`Invalid ${flag} date. Use YYYY-MM-DD or ISO-8601.`);
+  return false;
+}
+
+const DUPE_MODES = new Set(["snapshot", "metadata", "details", "transcript", "text", "transcript-text", "summary", "content"]);
+
 function fileTimeMs(file: any): number | null {
   const created = Number(file?.start_time);
   if (Number.isFinite(created)) return created;
@@ -412,6 +427,7 @@ filesCmd
   .option("--what <list>", "Comma-separated: json,transcript,summary", "json,transcript,summary")
   .option("--batch-size <n>", "IDs per details request (auto-fallback to 1 on failure)", (v) => Number(v), 10)
   .option("--delay-ms <n>", "Delay between batches (ms)", (v) => Number(v), 250)
+  .option("--json", "Print JSON")
   .action(async (opts: any) => {
     const token = await resolveAuthToken();
     if (!token) {
@@ -423,15 +439,7 @@ filesCmd
     const sinceDate = parseStoreDate(opts.since);
     const untilDate = parseStoreDate(opts.until);
     if ((opts.since && !sinceDate) || (opts.until && !untilDate)) {
-      process.exitCode = 2;
-      printJson(
-        fail(
-          makeError(null, {
-            code: "VALIDATION",
-            message: "Invalid date. Use YYYY-MM-DD or ISO-8601 for --since/--until.",
-          }),
-        ),
-      );
+      printValidation("Invalid date. Use YYYY-MM-DD or ISO-8601 for --since/--until.");
       return;
     }
 
@@ -524,19 +532,15 @@ filesCmd
   .option("--to <iso>", "Only include files on/before this date (YYYY-MM-DD or ISO-8601)")
   .option("--all", "List newest local records when no query is provided", false)
   .option("--all-snapshots", "Search historical snapshots, not only current snapshots", false)
+  .option("--snippets", "Include snippets from local transcript/summary content", false)
+  .option("--ids-only", "Return a compact id/name list without scores, snippets, or hashes", false)
+  .option("--json", "Print JSON")
   .action(async (query: string | undefined, opts: any) => {
     if (!opts.all && !String(query || "").trim()) {
-      process.exitCode = 2;
-      printJson(
-        fail(
-          makeError(null, {
-            code: "VALIDATION",
-            message: "Provide a query or pass --all to list local records.",
-          }),
-        ),
-      );
+      printValidation("Provide a query or pass --all to list local records.");
       return;
     }
+    if (!validateStoreDateFlag(opts.from, "--from") || !validateStoreDateFlag(opts.to, "--to")) return;
 
     try {
       const storePaths = resolveStorePaths(opts.store || null);
@@ -548,8 +552,21 @@ filesCmd
         to: opts.to,
         includeAllSnapshots: !!opts.allSnapshots,
         listAll: !!opts.all,
+        includeSnippets: !!opts.snippets,
       });
-      printJson(ok(result, { localOnly: true }));
+      const data = opts.idsOnly
+        ? {
+            ...result,
+            items: result.items.map((item) => ({
+              id: item.id,
+              snapshotHash: item.snapshotHash,
+              name: item.name,
+              createdAt: item.createdAt,
+              modifiedAt: item.modifiedAt,
+            })),
+          }
+        : result;
+      printJson(ok(data, { localOnly: true, snippets: !!opts.snippets }));
     } catch (err: any) {
       process.exitCode = 1;
       printJson(fail(makeError(err)));
@@ -562,12 +579,18 @@ filesCmd
   .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
   .option("--by <field>", "snapshot|metadata|details|transcript|text|summary|content", "content")
   .option("--all-snapshots", "Include historical snapshots, not only current snapshots", false)
+  .option("--json", "Print JSON")
   .action(async (opts: any) => {
+    const by = String(opts.by || "content");
+    if (!DUPE_MODES.has(by)) {
+      printValidation(`Invalid --by value "${by}". Use snapshot, metadata, details, transcript, text, summary, or content.`);
+      return;
+    }
     try {
       const storePaths = resolveStorePaths(opts.store || null);
       const result = await findDuplicateGroups({
         paths: storePaths,
-        by: String(opts.by || "content"),
+        by,
         includeAllSnapshots: !!opts.allSnapshots,
       });
       printJson(ok(result, { localOnly: true }));
@@ -937,6 +960,7 @@ recordingSpeakersCmd
   .requiredOption("--to <label>", "New display label (e.g. \"Person A\")")
   .option("--match <mode>", "original | speaker | both (default: original)", "original")
   .option("--dry-run", "Show how many segments would change without saving", false)
+  .option("--json", "Print JSON")
   .action(async (id: string, opts: any) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1006,6 +1030,7 @@ filesCmd
   .command("trash")
   .description("Move recording(s) to trash")
   .argument("<id...>", "Recording id(s)")
+  .option("--json", "Print JSON")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1023,6 +1048,7 @@ filesCmd
   .command("restore")
   .description("Restore recording(s) from trash")
   .argument("<id...>", "Recording id(s)")
+  .option("--json", "Print JSON")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1066,6 +1092,7 @@ recordingTagsCmd
   .description("Add a tag to one or more recordings")
   .argument("<tagId>", "Tag id")
   .argument("<id...>", "Recording id(s)")
+  .option("--json", "Print JSON")
   .action(async (tagId: string, ids: string[]) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1083,6 +1110,7 @@ recordingTagsCmd
   .command("clear")
   .description("Clear all tags from one or more recordings")
   .argument("<id...>", "Recording id(s)")
+  .option("--json", "Print JSON")
   .action(async (ids: string[]) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1148,6 +1176,7 @@ filesCmd
   .option("--wait", "Poll until Plaud no longer reports running tasks for this file", false)
   .option("--timeout-ms <n>", "Wait timeout in ms", (v) => Number(v), 300000)
   .option("--poll-ms <n>", "Poll interval in ms", (v) => Number(v), 2000)
+  .option("--json", "Print JSON")
   .action(async (id: string, opts: any) => {
     const token = await requireToken({ json: true });
     if (!token) return;
@@ -1284,6 +1313,7 @@ filesCmd
   .option("--out <dir>", "Output directory", defaultDownloadDir())
   .option("--what <list>", "Comma-separated: transcript,summary,json,audio", "transcript,summary,json")
   .option("--audio-format <fmt>", "opus or original", "opus")
+  .option("--json", "Print JSON")
   .action(async (id: string, opts: { out: string; what: string; audioFormat: string }) => {
     const token = await resolveAuthToken();
     if (!token) {
@@ -1321,6 +1351,7 @@ filesCmd
   .option("--since <iso>", "Only export recordings on/after this date (ISO string or YYYY-MM-DD)")
   .option("--until <iso>", "Only export recordings on/before this date (ISO string or YYYY-MM-DD)")
   .option("--resume", "Skip writing files that already exist (dir mode)", false)
+  .option("--json", "Print JSON")
   .action(async (opts: any) => {
     const token = await resolveAuthToken();
     if (!token) {
@@ -1420,7 +1451,8 @@ storeCmd
   .command("verify")
   .description("Verify local store index references")
   .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
-  .action(async (opts: { store?: string }) => {
+  .option("--json", "Print JSON")
+  .action(async (opts: { store?: string; json?: boolean }) => {
     try {
       const storePaths = resolveStorePaths(opts.store || null);
       const result = await verifyStore(storePaths);
@@ -1437,7 +1469,9 @@ storeCmd
   .description("Delete the local store")
   .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
   .option("--yes", "Confirm deletion", false)
-  .action(async (opts: { store?: string; yes?: boolean }) => {
+  .option("--i-understand-this-deletes-arbitrary-path", "Allow deleting a custom directory without a Plaud store index", false)
+  .option("--json", "Print JSON")
+  .action(async (opts: { store?: string; yes?: boolean; iUnderstandThisDeletesArbitraryPath?: boolean; json?: boolean }) => {
     if (!opts.yes) {
       process.exitCode = 2;
       printJson(
@@ -1452,8 +1486,13 @@ storeCmd
     }
     try {
       const storePaths = resolveStorePaths(opts.store || null);
-      printJson(ok(await clearStore(storePaths)));
+      printJson(ok(await clearStore(storePaths, { allowUnsafeMissingIndex: !!opts.iUnderstandThisDeletesArbitraryPath })));
     } catch (err: any) {
+      if (err instanceof StoreClearSafetyError) {
+        process.exitCode = 2;
+        printJson(fail(makeError(err, { code: "VALIDATION", message: err.message })));
+        return;
+      }
       process.exitCode = 1;
       printJson(fail(makeError(err)));
     }

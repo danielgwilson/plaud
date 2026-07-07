@@ -121,7 +121,7 @@ test("store status --json works without auth", async () => {
 
 test("files search requires a query or --all", async () => {
   await withTempDir(async (tmp) => {
-    const r = await runCli(["files", "search"], {
+    const r = await runCli(["files", "search", "--json"], {
       XDG_CONFIG_HOME: path.join(tmp, "config"),
       PLAUD_STORE_DIR: path.join(tmp, "store"),
       PLAUD_AUTH_TOKEN: "",
@@ -133,9 +133,71 @@ test("files search requires a query or --all", async () => {
   });
 });
 
+test("files search validates date filters", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "search", "--all", "--from", "bad-date", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "VALIDATION");
+    assert.match(parsed.error.message, /Invalid --from date/);
+  });
+});
+
+test("files dupes validates --by", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "dupes", "--by", "bogus", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "VALIDATION");
+    assert.match(parsed.error.message, /Invalid --by value/);
+  });
+});
+
+test("store clear refuses dangerous paths", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["store", "clear", "--store", "/", "--yes", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "VALIDATION");
+    assert.match(parsed.error.message, /Refusing to clear filesystem root/);
+  });
+});
+
+test("store clear refuses custom directories without a store index", async () => {
+  await withTempDir(async (tmp) => {
+    const custom = path.join(tmp, "custom");
+    await fs.mkdir(custom, { recursive: true });
+    const r = await runCli(["store", "clear", "--store", custom, "--yes", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "VALIDATION");
+    assert.match(parsed.error.message, /without a Plaud store index/);
+  });
+});
+
 test("files sync returns v1 envelope on missing auth (exit 2)", async () => {
   await withTempDir(async (tmp) => {
-    const r = await runCli(["files", "sync", "--max", "1"], {
+    const r = await runCli(["files", "sync", "--max", "1", "--json"], {
       XDG_CONFIG_HOME: path.join(tmp, "config"),
       PLAUD_STORE_DIR: path.join(tmp, "store"),
       PLAUD_AUTH_TOKEN: "",
