@@ -52,6 +52,8 @@
   ],
   "dependencies": {
     "commander": "^12.1.0",
+    "env-paths": "^4.0.0",
+    "minisearch": "^7.2.0",
     "playwright-core": "^1.51.1",
     "yazl": "^3.3.1"
   },

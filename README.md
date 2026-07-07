@@ -3,7 +3,7 @@
 ![CI](https://github.com/danielgwilson/plaud/actions/workflows/ci.yml/badge.svg)
 ![npm](https://img.shields.io/npm/v/plaud)
 
-Export all your Plaud recordings with speaker-labeled transcripts and optional AI summaries.
+Export, sync, search, and de-duplicate Plaud recordings with speaker-labeled transcripts and optional AI summaries.
 
 ## Official Plaud Tools Exist Now
 
@@ -126,8 +126,37 @@ plaud files download <id> --out ./plaud-download --what transcript,summary,json
 plaud files download <id> --out ./plaud-download --what audio --audio-format opus
 ```
 
+## Local Store, Search, and De-Dupe
+
+For larger libraries, sync file details into a private local store. The store is local-only, content-addressed, and kept outside the current working directory by default.
+
+```bash
+plaud files sync
+plaud files search "project kickoff"
+plaud files dupes --by content
+plaud store status
+plaud store path
+plaud store verify
+```
+
+The default store location follows the OS data directory conventions. You can override it per command or process:
+
+```bash
+plaud files sync --store ./scratch-store --max 50
+PLAUD_STORE_DIR=./scratch-store plaud files search "follow up"
+```
+
+De-dupe is intentionally conservative:
+- a rename or metadata edit creates a new snapshot
+- unchanged transcript or summary content reuses the existing content blob
+- `plaud files dupes --by content` groups matching transcript/summary content
+- `plaud files dupes --by snapshot` only groups fully identical snapshots
+
+Use `plaud store clear --yes` to delete the local store. This never clears Plaud cloud data.
+
 Notes:
 - `plaud files export` prints a JSON summary to stdout; progress goes to stderr.
+- `plaud files sync` prints a JSON summary to stdout; progress goes to stderr.
 - (`plaud recordings …` is supported as an alias for `plaud files …`.)
 - Tokens are stored at `~/.config/plaud/config.json` with `0600` permissions.
 

@@ -17,6 +17,11 @@ Note: `plaud recordings …` is supported as an alias for `plaud files …`.
   - `plaud files tags clear`
   - `plaud files rerun`
   - `plaud files speakers rename`
+  - `plaud files sync`
+  - `plaud files search`
+  - `plaud files dupes`
+  - `plaud store verify`
+  - `plaud store clear`
 
 ## JSON envelope
 
@@ -241,6 +246,109 @@ Success:
     "zipPath": "/abs/path.zip"
   }
 }
+```
+
+### `plaud files sync`
+
+Success:
+```json
+{
+  "ok": true,
+  "data": {
+    "storeDir": "/abs/store",
+    "scanned": 10,
+    "selected": 10,
+    "changed": 2,
+    "unchanged": 8,
+    "currentChanged": 2,
+    "blobWrites": 4,
+    "failed": [],
+    "status": { "recordings": 10, "snapshots": 12, "blobs": 30 }
+  },
+  "meta": {
+    "includeTrash": false,
+    "what": { "json": true, "transcript": true, "summary": true }
+  }
+}
+```
+
+Notes:
+- Sync writes a private local store outside the current working directory by default.
+- A metadata edit such as a rename creates a new snapshot.
+- Unchanged transcript/summary content reuses existing content-addressed blobs.
+
+### `plaud files search <query>`
+
+Success:
+```json
+{
+  "ok": true,
+  "data": {
+    "storeDir": "/abs/store",
+    "totalIndexed": 10,
+    "items": [
+      {
+        "id": "synthetic-id",
+        "snapshotHash": "sha256...",
+        "name": "Synthetic title",
+        "score": 1.23,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "modifiedAt": "2026-01-01T00:00:00.000Z",
+        "durationMs": 1234,
+        "snippet": "Synthetic transcript snippet...",
+        "hashes": { "snapshot": "sha256...", "metadata": "sha256...", "details": "sha256..." }
+      }
+    ]
+  },
+  "meta": { "localOnly": true }
+}
+```
+
+Failure when no query is provided:
+```json
+{ "ok": false, "error": { "code": "VALIDATION", "message": "Provide a query or pass --all to list local records.", "retryable": false } }
+```
+
+### `plaud files dupes`
+
+Success:
+```json
+{
+  "ok": true,
+  "data": {
+    "storeDir": "/abs/store",
+    "by": "content",
+    "groups": [
+      {
+        "hash": "sha256...",
+        "count": 2,
+        "items": [{ "id": "synthetic-id", "snapshotHash": "sha256...", "name": "Synthetic title" }]
+      }
+    ]
+  },
+  "meta": { "localOnly": true }
+}
+```
+
+### `plaud store status --json`
+
+Success:
+```json
+{ "ok": true, "data": { "storeDir": "/abs/store", "recordings": 10, "snapshots": 12, "blobs": 30, "updatedAt": "2026-01-01T00:00:00.000Z" } }
+```
+
+### `plaud store verify`
+
+Success:
+```json
+{ "ok": true, "data": { "storeDir": "/abs/store", "recordings": 10, "snapshots": 12, "blobs": 30, "ok": true, "missing": [] } }
+```
+
+### `plaud store clear --yes`
+
+Success:
+```json
+{ "ok": true, "data": { "storeDir": "/abs/store", "removed": true } }
 ```
 
 ### `plaud files trash <id...>`
