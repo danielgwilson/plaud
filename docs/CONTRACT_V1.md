@@ -299,16 +299,49 @@ Success:
         "snippet": null,
         "hashes": { "snapshot": "sha256...", "metadata": "sha256...", "details": "sha256..." }
       }
-    ]
+    ],
+    "coverage": {
+      "exhaustive": false,
+      "mode": "text",
+      "fieldsSearched": ["name", "transcript", "summary", "tags", "speakers"],
+      "warnings": [
+        "Search results are candidates, not proof of exhaustive corpus coverage."
+      ],
+      "riskFactors": {
+        "totalIndexedAfterFilters": 10,
+        "dateFiltered": false,
+        "historicalSnapshotsIncluded": false,
+        "snippetsIncluded": false,
+        "genericSpeakerRecords": 3,
+        "recordsWithoutSpeakers": 0,
+        "missingTranscriptRecords": 0,
+        "missingSummaryRecords": 0,
+        "candidateRecordsBeforeLimit": 10,
+        "returnedLimit": 20,
+        "truncated": false
+      }
+    }
   },
-  "meta": { "localOnly": true, "snippets": false }
+  "meta": {
+    "localOnly": true,
+    "snippets": false,
+    "coverageWarnings": [
+      "Search results are candidates, not proof of exhaustive corpus coverage."
+    ]
+  }
 }
 ```
 
 Notes:
-- Search is metadata-only by default.
+- Search output is metadata-only by default, but matching uses available local title, transcript, summary, tag, and speaker text.
 - Pass `--snippets` to include snippets from local transcript/summary content.
 - Pass `--ids-only` for compact agent-safe result lists.
+- `coverage.exhaustive` is always `false`; filters and searches produce candidates, not proof that no relevant recording exists elsewhere.
+- `riskFactors.truncated` means more candidate records existed than were returned. Increase `--limit` and keep triangulating before claiming completeness.
+- Speaker/name searches depend on detected local speaker metadata and searchable text. Generic speakers such as `Speaker 1` can hide relevant recordings.
+- `coverage.warnings` also flags high-risk query shapes such as generic speaker terms, very short aliases, and broad multi-term fuzzy searches.
+- For comprehensive retrieval, combine exact terms with aliases, adjacent people, broad topical searches, date sweeps, generic-speaker checks, and targeted transcript review.
+- Completeness-oriented answers should include a coverage receipt: queries, filters, result counts, confirmed IDs, suspected misses, and known lossy assumptions.
 
 Failure when no query is provided:
 ```json

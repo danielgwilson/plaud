@@ -524,7 +524,7 @@ filesCmd
 
 filesCmd
   .command("search")
-  .description("Search the local store without calling Plaud")
+  .description("Search the local store without calling Plaud (candidate retrieval, not exhaustive proof)")
   .argument("[query]", "Search query")
   .option("--store <dir>", "Local store directory (default: OS data dir or PLAUD_STORE_DIR)")
   .option("--limit <n>", "Max results", (v) => Number(v), 20)
@@ -535,6 +535,19 @@ filesCmd
   .option("--snippets", "Include snippets from local transcript/summary content", false)
   .option("--ids-only", "Return a compact id/name list without scores, snippets, or hashes", false)
   .option("--json", "Print JSON")
+  .addHelpText(
+    "after",
+    `
+Coverage:
+  Search results are candidates, not proof that every relevant recording was found.
+  Speaker/name matches depend on detected labels and searchable text; unlabeled
+  Speaker 1/Speaker 2 segments can hide relevant recordings. Exact project
+  names can miss allusions, nicknames, and older names. If riskFactors.truncated
+  is true, increase --limit. Read data.coverage and meta.coverageWarnings before
+  claiming completeness. Generic speaker terms, short aliases, and broad
+  multi-term fuzzy searches are high-risk and will be flagged in coverage warnings.
+`,
+  )
   .action(async (query: string | undefined, opts: any) => {
     if (!opts.all && !String(query || "").trim()) {
       printValidation("Provide a query or pass --all to list local records.");
@@ -566,7 +579,13 @@ filesCmd
             })),
           }
         : result;
-      printJson(ok(data, { localOnly: true, snippets: !!opts.snippets }));
+      printJson(
+        ok(data, {
+          localOnly: true,
+          snippets: !!opts.snippets,
+          coverageWarnings: result.coverage.warnings,
+        }),
+      );
     } catch (err: any) {
       process.exitCode = 1;
       printJson(fail(makeError(err)));
