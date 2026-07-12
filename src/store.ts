@@ -121,15 +121,16 @@ export type SearchCoverage = {
   fieldsSearched: Array<(typeof SEARCH_FIELDS)[number]>;
   warnings: string[];
   riskFactors: {
-    totalIndexedAfterFilters: number;
+    totalIndexedEntriesAfterFilters: number;
+    uniqueRecordingsAfterFilters: number;
     dateFiltered: boolean;
     historicalSnapshotsIncluded: boolean;
     snippetsIncluded: boolean;
-    genericSpeakerRecords: number;
-    recordsWithoutSpeakers: number;
-    missingTranscriptRecords: number;
-    missingSummaryRecords: number;
-    candidateRecordsBeforeLimit: number;
+    genericSpeakerEntries: number;
+    entriesWithoutSpeakers: number;
+    missingTranscriptEntries: number;
+    missingSummaryEntries: number;
+    candidateEntriesBeforeLimit: number;
     returnedLimit: number;
     truncated: boolean;
   };
@@ -575,7 +576,7 @@ function buildSearchCoverage({
   to,
   includeAllSnapshots,
   includeSnippets,
-  candidateRecordsBeforeLimit,
+  candidateEntriesBeforeLimit,
   returnedLimit,
   query,
 }: {
@@ -585,18 +586,18 @@ function buildSearchCoverage({
   to?: string;
   includeAllSnapshots: boolean;
   includeSnippets: boolean;
-  candidateRecordsBeforeLimit: number;
+  candidateEntriesBeforeLimit: number;
   returnedLimit: number;
   query?: string;
 }): SearchCoverage {
-  const genericSpeakerRecords = docs.filter((doc) => /(?:^|\s)\[?\s*speaker\s*\d+\s*\]?/i.test(doc.speakers)).length;
-  const recordsWithoutSpeakers = docs.filter((doc) => !doc.speakers.trim()).length;
-  const missingTranscriptRecords = docs.filter((doc) => !doc.transcript.trim()).length;
-  const missingSummaryRecords = docs.filter((doc) => !doc.summary.trim()).length;
+  const genericSpeakerEntries = docs.filter((doc) => /(?:^|\s)\[?\s*speaker\s*\d+\s*\]?/i.test(doc.speakers)).length;
+  const entriesWithoutSpeakers = docs.filter((doc) => !doc.speakers.trim()).length;
+  const missingTranscriptEntries = docs.filter((doc) => !doc.transcript.trim()).length;
+  const missingSummaryEntries = docs.filter((doc) => !doc.summary.trim()).length;
 
   const warnings = ["Search results are candidates, not proof of exhaustive corpus coverage."];
   if (mode === "list") {
-    warnings.push("Listing records is not semantic retrieval; it only applies ordering and filters, and no text fields were searched.");
+    warnings.push("Listing entries is not semantic retrieval; it only applies ordering and filters, and no text fields were searched.");
   } else {
     warnings.push("Text search is lossy: it uses token, prefix, and fuzzy matching across available local fields.");
   }
@@ -607,10 +608,13 @@ function buildSearchCoverage({
   if (from || to) {
     warnings.push("Date filters restrict the candidate set and can hide older or misdated relevant recordings.");
   }
-  if (missingTranscriptRecords > 0 || missingSummaryRecords > 0) {
-    warnings.push("Some local records are missing transcript or summary text, so text search may miss them.");
+  if (includeAllSnapshots) {
+    warnings.push("Historical snapshots are included; coverage counts refer to snapshot entries, so one recording may appear more than once.");
   }
-  if (candidateRecordsBeforeLimit > returnedLimit) {
+  if (missingTranscriptEntries > 0 || missingSummaryEntries > 0) {
+    warnings.push("Some indexed entries are missing transcript or summary text, so text search may miss them.");
+  }
+  if (candidateEntriesBeforeLimit > returnedLimit) {
     warnings.push("The result limit was reached; increase --limit and continue triangulating before claiming completeness.");
   }
   if (query) {
@@ -635,17 +639,18 @@ function buildSearchCoverage({
     fieldsSearched: mode === "text" ? [...SEARCH_FIELDS] : [],
     warnings,
     riskFactors: {
-      totalIndexedAfterFilters: docs.length,
+      totalIndexedEntriesAfterFilters: docs.length,
+      uniqueRecordingsAfterFilters: new Set(docs.map((doc) => doc.id)).size,
       dateFiltered: !!(from || to),
       historicalSnapshotsIncluded: includeAllSnapshots,
       snippetsIncluded: includeSnippets,
-      genericSpeakerRecords,
-      recordsWithoutSpeakers,
-      missingTranscriptRecords,
-      missingSummaryRecords,
-      candidateRecordsBeforeLimit,
+      genericSpeakerEntries,
+      entriesWithoutSpeakers,
+      missingTranscriptEntries,
+      missingSummaryEntries,
+      candidateEntriesBeforeLimit,
       returnedLimit,
-      truncated: candidateRecordsBeforeLimit > returnedLimit,
+      truncated: candidateEntriesBeforeLimit > returnedLimit,
     },
   };
 }
@@ -688,7 +693,7 @@ export async function searchStore({
       to,
       includeAllSnapshots,
       includeSnippets,
-      candidateRecordsBeforeLimit: docs.length,
+      candidateEntriesBeforeLimit: docs.length,
       returnedLimit: max,
       query,
     });
@@ -714,6 +719,7 @@ export async function searchStore({
   }
 
   const miniSearch = new MiniSearch<SearchDocument>({
+    idField: "snapshotHash",
     fields: [...SEARCH_FIELDS],
     storeFields: ["id", "snapshotHash", "name", "createdAt", "modifiedAt", "durationMs"],
   });
@@ -727,7 +733,7 @@ export async function searchStore({
     to,
     includeAllSnapshots,
     includeSnippets,
-    candidateRecordsBeforeLimit: matches.length,
+    candidateEntriesBeforeLimit: matches.length,
     returnedLimit: max,
     query,
   });

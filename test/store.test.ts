@@ -97,7 +97,7 @@ test("local search returns current snapshots without snippets by default", async
     assert.equal(result.coverage.exhaustive, false);
     assert.equal(result.coverage.mode, "text");
     assert.deepEqual(result.coverage.fieldsSearched, ["name", "transcript", "summary", "tags", "speakers"]);
-    assert.equal(result.coverage.riskFactors.candidateRecordsBeforeLimit, 1);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 1);
     assert.equal(result.coverage.riskFactors.truncated, false);
     assert.match(result.coverage.warnings.join("\n"), /candidates, not proof of exhaustive corpus coverage/);
   });
@@ -116,7 +116,7 @@ test("local search coverage reports generic speaker risk", async () => {
 
     const result = await searchStore({ paths, query: "candidate", limit: 5 });
 
-    assert.equal(result.coverage.riskFactors.genericSpeakerRecords, 1);
+    assert.equal(result.coverage.riskFactors.genericSpeakerEntries, 1);
     assert.match(result.coverage.warnings.join("\n"), /unlabeled or generic speakers/);
   });
 });
@@ -132,10 +132,27 @@ test("local search coverage reports when result limit is reached", async () => {
     const result = await searchStore({ paths, query: "recall coverage", limit: 1 });
 
     assert.equal(result.items.length, 1);
-    assert.equal(result.coverage.riskFactors.candidateRecordsBeforeLimit, 2);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 2);
     assert.equal(result.coverage.riskFactors.returnedLimit, 1);
     assert.equal(result.coverage.riskFactors.truncated, true);
     assert.match(result.coverage.warnings.join("\n"), /result limit was reached/);
+  });
+});
+
+test("local search coverage distinguishes historical snapshots from recordings", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Original name", content: "Discuss recall coverage." });
+    const renamed = recording({ id: "rec_1", name: "Renamed recording", content: "Discuss recall coverage." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+    await putRecordingSnapshot({ paths, file: renamed.file, details: renamed.details });
+
+    const result = await searchStore({ paths, query: "recall coverage", limit: 5, includeAllSnapshots: true });
+
+    assert.equal(result.coverage.riskFactors.totalIndexedEntriesAfterFilters, 2);
+    assert.equal(result.coverage.riskFactors.uniqueRecordingsAfterFilters, 1);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 2);
+    assert.match(result.coverage.warnings.join("\n"), /one recording may appear more than once/);
   });
 });
 

@@ -160,7 +160,7 @@ Search is a candidate generator, not proof of exhaustive coverage. Every `files 
 Important recall traps:
 - speaker/name matches only work when the speaker or name was detected or present in searchable text; unlabeled `Speaker 1` / `Speaker 2` segments can hide relevant recordings
 - date filters, speaker/name queries, exact names, and project names improve precision but can reduce recall
-- `data.coverage.riskFactors.truncated` means more candidate records existed than were returned; increase `--limit` before treating the set as reviewed
+- `data.coverage.riskFactors.truncated` means more candidate entries existed than were returned; increase `--limit` before treating the set as reviewed
 - generic speaker terms, very short aliases, and broad multi-term fuzzy queries are high-risk and may return noisy candidate pools
 - alluded-to projects may not contain the project name at all
 - a comprehensive pass should triangulate: broad topical terms, aliases, adjacent people, date sweeps, generic-speaker risk, and targeted transcript review of candidates

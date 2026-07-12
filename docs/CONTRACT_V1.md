@@ -308,15 +308,16 @@ Success:
         "Search results are candidates, not proof of exhaustive corpus coverage."
       ],
       "riskFactors": {
-        "totalIndexedAfterFilters": 10,
+        "totalIndexedEntriesAfterFilters": 10,
+        "uniqueRecordingsAfterFilters": 10,
         "dateFiltered": false,
         "historicalSnapshotsIncluded": false,
         "snippetsIncluded": false,
-        "genericSpeakerRecords": 3,
-        "recordsWithoutSpeakers": 0,
-        "missingTranscriptRecords": 0,
-        "missingSummaryRecords": 0,
-        "candidateRecordsBeforeLimit": 10,
+        "genericSpeakerEntries": 3,
+        "entriesWithoutSpeakers": 0,
+        "missingTranscriptEntries": 0,
+        "missingSummaryEntries": 0,
+        "candidateEntriesBeforeLimit": 10,
         "returnedLimit": 20,
         "truncated": false
       }
@@ -337,7 +338,8 @@ Notes:
 - Pass `--snippets` to include snippets from local transcript/summary content.
 - Pass `--ids-only` for compact agent-safe result lists.
 - `coverage.exhaustive` is always `false`; filters and searches produce candidates, not proof that no relevant recording exists elsewhere.
-- `riskFactors.truncated` means more candidate records existed than were returned. Increase `--limit` and keep triangulating before claiming completeness.
+- `riskFactors.truncated` means more candidate entries existed than were returned. Increase `--limit` and keep triangulating before claiming completeness.
+- With `--all-snapshots`, entry counts include historical snapshots and can exceed `uniqueRecordingsAfterFilters`; one recording may appear more than once.
 - Speaker/name searches depend on detected local speaker metadata and searchable text. Generic speakers such as `Speaker 1` can hide relevant recordings.
 - `coverage.warnings` also flags high-risk query shapes such as generic speaker terms, very short aliases, and broad multi-term fuzzy searches.
 - For comprehensive retrieval, combine exact terms with aliases, adjacent people, broad topical searches, date sweeps, generic-speaker checks, and targeted transcript review.
