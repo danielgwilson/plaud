@@ -1,7 +1,7 @@
 {
   "name": "plaud",
-  "version": "0.1.11",
-  "description": "Unofficial advanced Plaud exporter for JSON-first and bulk transcript, summary, and audio workflows",
+  "version": "0.1.12",
+  "description": "Unofficial Plaud exporter for JSON-first bulk transcript and summary workflows, plus single-recording audio downloads",
   "license": "MIT",
   "author": "Daniel G Wilson",
   "type": "module",
