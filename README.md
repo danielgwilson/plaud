@@ -62,7 +62,8 @@ This repo is configured for npm **trusted publishing** from GitHub Actions.
 ## Install (local)
 
 ```bash
-cd plaud/plaud-cli
+git clone https://github.com/danielgwilson/plaud.git
+cd plaud
 npm install
 npm link
 ```

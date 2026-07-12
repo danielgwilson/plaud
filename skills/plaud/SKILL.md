@@ -49,7 +49,7 @@ For comprehensive retrieval, do not stop after one exact query or one filter.
    - If `truncated` is true, increase `--limit` and treat the first response as incomplete.
    - If warnings mention generic speaker terms, short aliases, or multi-term fuzzy search, add more precise/adjacent queries before making a claim.
 3. Run adjacent searches:
-   - aliases: `Alex`, `Alex R.`, `Alex Rivera`
+   - aliases: `Jordan`, `J. Lee`, `Jordan Lee`
    - project variants: `Project Atlas`, `Atlas project`, old names, related people, adjacent domain terms
    - people/context: cofounders, advisors, customers, topic terms, dates
    - unlabeled-speaker risk: `Speaker 1`, `Speaker 2`, `unknown`, title-known names
@@ -65,24 +65,26 @@ Good pattern:
 
 > Exact search for `Project Atlas` returned two direct hits. Adjacent searches for related people and domain language returned more candidates, so I am treating the exact hits as confirmed direct matches and the adjacent hits as review candidates. Coverage remains non-exhaustive because allusions, unlabeled speakers, and missing transcript/summary text can hide relevant recordings.
 
-For hard fuzzy asks such as "emotionally charged founder conversations" or "entries where unnamed speakers are actually known", build a small query matrix first. Include direct terms, aliases, adjacent people, emotional/domain vocabulary, and generic speaker terms. Review snippets/transcripts for the resulting candidate set before making a completeness claim.
+For hard fuzzy asks such as "conversations involving disagreement, urgency, or a difficult decision" or "entries with unlabeled speakers whose identities may be inferable from context", build a small query matrix first. Include direct terms, aliases, adjacent people, emotional or domain vocabulary, and generic speaker terms. Review snippets or transcripts for the resulting candidate set before making a completeness claim.
+
+The following names and projects are synthetic examples.
 
 Example for a person:
 
 ```bash
-plaud files search "Alex Rivera" --ids-only --json
-plaud files search "Alex" --ids-only --json
-plaud files search "A. Rivera" --ids-only --json
-plaud files search "Speaker 1 Alex" --ids-only --json
+plaud files search "Jordan Lee" --ids-only --json
+plaud files search "Jordan" --ids-only --json
+plaud files search "J. Lee" --ids-only --json
+plaud files search "Speaker 1 Jordan" --ids-only --json
 ```
 
 Example for an alluded-to project:
 
 ```bash
 plaud files search "Project Atlas" --ids-only --json
-plaud files search "billing analytics migration" --ids-only --json
-plaud files search "invoice provenance audit truth" --ids-only --json
-plaud files search "founder customer advisor rollout" --snippets --json
+plaud files search "billing migration" --ids-only --json
+plaud files search "invoice reconciliation" --ids-only --json
+plaud files search "pilot customer rollout" --snippets --json
 ```
 
 ## Paging and filtering (precision tools, not proof)
