@@ -1,6 +1,6 @@
 {
   "name": "plaud",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "Unofficial advanced Plaud exporter for JSON-first and bulk transcript, summary, and audio workflows",
   "license": "MIT",
   "author": "Daniel G Wilson",
@@ -35,10 +35,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "npm run typecheck",
     "lint:public-surface": "node scripts/public-surface-check.mjs",
+    "check:release": "npm run lint && npm run lint:public-surface && npm test",
     "pretest": "npm run build",
     "test": "tsx --test",
     "start": "node dist/cli.js",
-    "prepublishOnly": "npm run lint && npm run lint:public-surface && npm test",
+    "prepublishOnly": "npm run check:release",
     "prepare": "npm run build"
   },
   "files": [
