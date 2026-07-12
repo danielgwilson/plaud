@@ -153,7 +153,19 @@ De-dupe is intentionally conservative:
 - `plaud files dupes --by content` groups matching transcript/summary content
 - `plaud files dupes --by snapshot` only groups fully identical snapshots
 
-Search results are metadata-only by default. Pass `--snippets` only when you want transcript/summary excerpts in stdout. Use `--ids-only` for compact agent-safe result lists.
+Search output is metadata-only by default. Search itself uses available local title, transcript, summary, tag, and speaker text. Pass `--snippets` only when you want transcript/summary excerpts in stdout. Use `--ids-only` for compact agent-safe result lists.
+
+Search is a candidate generator, not proof of exhaustive coverage. Every `files search --json` response includes `data.coverage` and `meta.coverageWarnings`; agents should read those fields before claiming they found "all" matching recordings.
+
+Important recall traps:
+- speaker/name matches only work when the speaker or name was detected or present in searchable text; unlabeled `Speaker 1` / `Speaker 2` segments can hide relevant recordings
+- date filters, speaker/name queries, exact names, and project names improve precision but can reduce recall
+- `data.coverage.riskFactors.truncated` means more candidate entries existed than were returned; increase `--limit` before treating the set as reviewed
+- generic speaker terms, very short aliases, and broad multi-term fuzzy queries are high-risk and may return noisy candidate pools
+- alluded-to projects may not contain the project name at all
+- a comprehensive pass should triangulate: broad topical terms, aliases, adjacent people, date sweeps, generic-speaker risk, and targeted transcript review of candidates
+
+For "all", "complete", or "thorough" retrieval tasks, include a coverage receipt in your answer: the queries and filters you used, broad result counts, confirmed IDs, suspected misses, and the lossy filters/search fields that limit the claim.
 
 Use `plaud store clear --yes` to delete the local store. This never clears Plaud cloud data, and the command refuses dangerous paths such as `/`, your home directory, and the current working directory.
 

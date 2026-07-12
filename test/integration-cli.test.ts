@@ -119,6 +119,23 @@ test("store status --json works without auth", async () => {
   });
 });
 
+test("files search --ids-only returns coverage warnings", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "search", "--all", "--ids-only", "--json"], {
+      XDG_CONFIG_HOME: path.join(tmp, "config"),
+      PLAUD_STORE_DIR: path.join(tmp, "store"),
+      PLAUD_AUTH_TOKEN: "",
+    });
+    assert.equal(r.exitCode, 0);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.data.coverage.exhaustive, false);
+    assert.deepEqual(parsed.data.coverage.fieldsSearched, []);
+    assert.equal(parsed.data.coverage.riskFactors.truncated, false);
+    assert.ok(parsed.meta.coverageWarnings.some((warning: string) => /not proof of exhaustive corpus coverage/.test(warning)));
+  });
+});
+
 test("files search requires a query or --all", async () => {
   await withTempDir(async (tmp) => {
     const r = await runCli(["files", "search", "--json"], {

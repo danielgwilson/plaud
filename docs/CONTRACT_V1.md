@@ -299,16 +299,51 @@ Success:
         "snippet": null,
         "hashes": { "snapshot": "sha256...", "metadata": "sha256...", "details": "sha256..." }
       }
-    ]
+    ],
+    "coverage": {
+      "exhaustive": false,
+      "mode": "text",
+      "fieldsSearched": ["name", "transcript", "summary", "tags", "speakers"],
+      "warnings": [
+        "Search results are candidates, not proof of exhaustive corpus coverage."
+      ],
+      "riskFactors": {
+        "totalIndexedEntriesAfterFilters": 10,
+        "uniqueRecordingsAfterFilters": 10,
+        "dateFiltered": false,
+        "historicalSnapshotsIncluded": false,
+        "snippetsIncluded": false,
+        "genericSpeakerEntries": 3,
+        "entriesWithoutSpeakers": 0,
+        "missingTranscriptEntries": 0,
+        "missingSummaryEntries": 0,
+        "candidateEntriesBeforeLimit": 10,
+        "returnedLimit": 20,
+        "truncated": false
+      }
+    }
   },
-  "meta": { "localOnly": true, "snippets": false }
+  "meta": {
+    "localOnly": true,
+    "snippets": false,
+    "coverageWarnings": [
+      "Search results are candidates, not proof of exhaustive corpus coverage."
+    ]
+  }
 }
 ```
 
 Notes:
-- Search is metadata-only by default.
+- Search output is metadata-only by default, but matching uses available local title, transcript, summary, tag, and speaker text.
 - Pass `--snippets` to include snippets from local transcript/summary content.
 - Pass `--ids-only` for compact agent-safe result lists.
+- `coverage.exhaustive` is always `false`; filters and searches produce candidates, not proof that no relevant recording exists elsewhere.
+- `riskFactors.truncated` means more candidate entries existed than were returned. Increase `--limit` and keep triangulating before claiming completeness.
+- With `--all-snapshots`, entry counts include historical snapshots and can exceed `uniqueRecordingsAfterFilters`; one recording may appear more than once.
+- Speaker/name searches depend on detected local speaker metadata and searchable text. Generic speakers such as `Speaker 1` can hide relevant recordings.
+- `coverage.warnings` also flags high-risk query shapes such as generic speaker terms, very short aliases, and broad multi-term fuzzy searches.
+- For comprehensive retrieval, combine exact terms with aliases, adjacent people, broad topical searches, date sweeps, generic-speaker checks, and targeted transcript review.
+- Completeness-oriented answers should include a coverage receipt: queries, filters, result counts, confirmed IDs, suspected misses, and known lossy assumptions.
 
 Failure when no query is provided:
 ```json

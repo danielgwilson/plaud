@@ -101,6 +101,8 @@ type SearchDocument = {
   durationMs: number | null;
 };
 
+const SEARCH_FIELDS = ["name", "transcript", "summary", "tags", "speakers"] as const;
+
 export type SearchResult = {
   id: string;
   snapshotHash: string;
@@ -111,6 +113,27 @@ export type SearchResult = {
   durationMs: number | null;
   snippet: string | null;
   hashes: SnapshotEntry["hashes"];
+};
+
+export type SearchCoverage = {
+  exhaustive: false;
+  mode: "text" | "list";
+  fieldsSearched: Array<(typeof SEARCH_FIELDS)[number]>;
+  warnings: string[];
+  riskFactors: {
+    totalIndexedEntriesAfterFilters: number;
+    uniqueRecordingsAfterFilters: number;
+    dateFiltered: boolean;
+    historicalSnapshotsIncluded: boolean;
+    snippetsIncluded: boolean;
+    genericSpeakerEntries: number;
+    entriesWithoutSpeakers: number;
+    missingTranscriptEntries: number;
+    missingSummaryEntries: number;
+    candidateEntriesBeforeLimit: number;
+    returnedLimit: number;
+    truncated: boolean;
+  };
 };
 
 export class StoreClearSafetyError extends Error {
@@ -546,6 +569,92 @@ function makeSnippet(doc: SearchDocument, query: string): string | null {
   return `${prefix}${haystack.slice(start, end)}${suffix}`;
 }
 
+function buildSearchCoverage({
+  docs,
+  mode,
+  from,
+  to,
+  includeAllSnapshots,
+  includeSnippets,
+  candidateEntriesBeforeLimit,
+  returnedLimit,
+  query,
+}: {
+  docs: SearchDocument[];
+  mode: SearchCoverage["mode"];
+  from?: string;
+  to?: string;
+  includeAllSnapshots: boolean;
+  includeSnippets: boolean;
+  candidateEntriesBeforeLimit: number;
+  returnedLimit: number;
+  query?: string;
+}): SearchCoverage {
+  const genericSpeakerEntries = docs.filter((doc) => /(?:^|\s)\[?\s*speaker\s*\d+\s*\]?/i.test(doc.speakers)).length;
+  const entriesWithoutSpeakers = docs.filter((doc) => !doc.speakers.trim()).length;
+  const missingTranscriptEntries = docs.filter((doc) => !doc.transcript.trim()).length;
+  const missingSummaryEntries = docs.filter((doc) => !doc.summary.trim()).length;
+
+  const warnings = ["Search results are candidates, not proof of exhaustive corpus coverage."];
+  if (mode === "list") {
+    warnings.push("Listing entries is not semantic retrieval; it only applies ordering and filters, and no text fields were searched.");
+  } else {
+    warnings.push("Text search is lossy: it uses token, prefix, and fuzzy matching across available local fields.");
+  }
+  warnings.push(
+    "Speaker-name matches depend on detected speaker metadata; unlabeled or generic speakers can hide relevant recordings.",
+    "For comprehensive retrieval, triangulate with aliases, broad topical searches, date sweeps, speaker/generic-speaker checks, and targeted transcript review.",
+  );
+  if (from || to) {
+    warnings.push("Date filters restrict the candidate set and can hide older or misdated relevant recordings.");
+  }
+  if (includeAllSnapshots) {
+    warnings.push("Historical snapshots are included; coverage counts refer to snapshot entries, so one recording may appear more than once.");
+  }
+  if (missingTranscriptEntries > 0 || missingSummaryEntries > 0) {
+    warnings.push("Some indexed entries are missing transcript or summary text, so text search may miss them.");
+  }
+  if (candidateEntriesBeforeLimit > returnedLimit) {
+    warnings.push("The result limit was reached; increase --limit and continue triangulating before claiming completeness.");
+  }
+  if (query) {
+    const terms = query
+      .split(/\s+/)
+      .map((term) => term.replace(/[^a-z0-9_-]/gi, ""))
+      .filter(Boolean);
+    if (/\b(?:speaker\s*\d+|unknown|unnamed)\b/i.test(query)) {
+      warnings.push("Query contains generic speaker/unknown terms; use this to detect review risk, not to prove participant identity.");
+    }
+    if (terms.some((term) => term.length > 0 && term.length <= 3)) {
+      warnings.push("Query contains very short terms or aliases; fuzzy/prefix matching can pull unrelated records.");
+    }
+    if (terms.length >= 3) {
+      warnings.push("Multi-term fuzzy search may return records matching only some terms; verify co-occurrence before treating results as jointly related.");
+    }
+  }
+
+  return {
+    exhaustive: false,
+    mode,
+    fieldsSearched: mode === "text" ? [...SEARCH_FIELDS] : [],
+    warnings,
+    riskFactors: {
+      totalIndexedEntriesAfterFilters: docs.length,
+      uniqueRecordingsAfterFilters: new Set(docs.map((doc) => doc.id)).size,
+      dateFiltered: !!(from || to),
+      historicalSnapshotsIncluded: includeAllSnapshots,
+      snippetsIncluded: includeSnippets,
+      genericSpeakerEntries,
+      entriesWithoutSpeakers,
+      missingTranscriptEntries,
+      missingSummaryEntries,
+      candidateEntriesBeforeLimit,
+      returnedLimit,
+      truncated: candidateEntriesBeforeLimit > returnedLimit,
+    },
+  };
+}
+
 export async function searchStore({
   paths,
   query,
@@ -564,7 +673,7 @@ export async function searchStore({
   includeAllSnapshots?: boolean;
   listAll?: boolean;
   includeSnippets?: boolean;
-}): Promise<{ items: SearchResult[]; totalIndexed: number; storeDir: string }> {
+}): Promise<{ items: SearchResult[]; totalIndexed: number; storeDir: string; coverage: SearchCoverage }> {
   const index = await loadStoreIndex(paths);
   const fromMs = parseDateMs(from);
   const toMs = parseDateMs(to);
@@ -577,9 +686,21 @@ export async function searchStore({
 
   if (listAll || !query?.trim()) {
     const sorted = docs.sort((a, b) => (b.createdAtMs ?? 0) - (a.createdAtMs ?? 0)).slice(0, max);
+    const coverage = buildSearchCoverage({
+      docs,
+      mode: "list",
+      from,
+      to,
+      includeAllSnapshots,
+      includeSnippets,
+      candidateEntriesBeforeLimit: docs.length,
+      returnedLimit: max,
+      query,
+    });
     return {
       totalIndexed: docs.length,
       storeDir: paths.root,
+      coverage,
       items: sorted.map((doc) => {
         const snapshot = index.snapshots[doc.snapshotHash];
         return {
@@ -598,14 +719,28 @@ export async function searchStore({
   }
 
   const miniSearch = new MiniSearch<SearchDocument>({
-    fields: ["name", "transcript", "summary", "tags", "speakers"],
+    idField: "snapshotHash",
+    fields: [...SEARCH_FIELDS],
     storeFields: ["id", "snapshotHash", "name", "createdAt", "modifiedAt", "durationMs"],
   });
   miniSearch.addAll(docs);
-  const results = miniSearch.search(query, { prefix: true, fuzzy: 0.2 }).slice(0, max);
+  const matches = miniSearch.search(query, { prefix: true, fuzzy: 0.2 });
+  const results = matches.slice(0, max);
+  const coverage = buildSearchCoverage({
+    docs,
+    mode: "text",
+    from,
+    to,
+    includeAllSnapshots,
+    includeSnippets,
+    candidateEntriesBeforeLimit: matches.length,
+    returnedLimit: max,
+    query,
+  });
   return {
     totalIndexed: docs.length,
     storeDir: paths.root,
+    coverage,
     items: results
       .map((result: any) => {
         const doc = docBySnapshot.get(String(result.snapshotHash));

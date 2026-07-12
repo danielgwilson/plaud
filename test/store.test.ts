@@ -23,7 +23,17 @@ async function withTempStore<T>(fn: (storeDir: string) => Promise<T>): Promise<T
   }
 }
 
-function recording({ id, name, content }: { id: string; name: string; content: string }) {
+function recording({
+  id,
+  name,
+  content,
+  speakers = ["A", "B"],
+}: {
+  id: string;
+  name: string;
+  content: string;
+  speakers?: string[];
+}) {
   const start = Date.UTC(2026, 0, 2, 3, 4, 5);
   const file = {
     id,
@@ -40,8 +50,8 @@ function recording({ id, name, content }: { id: string; name: string; content: s
     duration: 120_000,
     ai_content: "Synthetic summary about planning and follow-up.",
     trans_result: [
-      { start_time: 0, speaker: "A", content },
-      { start_time: 10_000, speaker: "B", content: "Follow-up item captured." },
+      { start_time: 0, speaker: speakers[0] || "Speaker 1", content },
+      { start_time: 10_000, speaker: speakers[1] || speakers[0] || "Speaker 2", content: "Follow-up item captured." },
     ],
   };
   return { file, details };
@@ -84,6 +94,80 @@ test("local search returns current snapshots without snippets by default", async
     assert.equal(result.items.length, 1);
     assert.equal(result.items[0].id, "rec_1");
     assert.equal(result.items[0].snippet, null);
+    assert.equal(result.coverage.exhaustive, false);
+    assert.equal(result.coverage.mode, "text");
+    assert.deepEqual(result.coverage.fieldsSearched, ["name", "transcript", "summary", "tags", "speakers"]);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 1);
+    assert.equal(result.coverage.riskFactors.truncated, false);
+    assert.match(result.coverage.warnings.join("\n"), /candidates, not proof of exhaustive corpus coverage/);
+  });
+});
+
+test("local search coverage reports generic speaker risk", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({
+      id: "rec_1",
+      name: "Interview with known title",
+      content: "Discuss candidate background.",
+      speakers: ["Speaker 1"],
+    });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+
+    const result = await searchStore({ paths, query: "candidate", limit: 5 });
+
+    assert.equal(result.coverage.riskFactors.genericSpeakerEntries, 1);
+    assert.match(result.coverage.warnings.join("\n"), /unlabeled or generic speakers/);
+  });
+});
+
+test("local search coverage reports when result limit is reached", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Planning 1", content: "Discuss recall coverage." });
+    const second = recording({ id: "rec_2", name: "Planning 2", content: "Discuss recall coverage." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+    await putRecordingSnapshot({ paths, file: second.file, details: second.details });
+
+    const result = await searchStore({ paths, query: "recall coverage", limit: 1 });
+
+    assert.equal(result.items.length, 1);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 2);
+    assert.equal(result.coverage.riskFactors.returnedLimit, 1);
+    assert.equal(result.coverage.riskFactors.truncated, true);
+    assert.match(result.coverage.warnings.join("\n"), /result limit was reached/);
+  });
+});
+
+test("local search coverage distinguishes historical snapshots from recordings", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Original name", content: "Discuss recall coverage." });
+    const renamed = recording({ id: "rec_1", name: "Renamed recording", content: "Discuss recall coverage." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+    await putRecordingSnapshot({ paths, file: renamed.file, details: renamed.details });
+
+    const result = await searchStore({ paths, query: "recall coverage", limit: 5, includeAllSnapshots: true });
+
+    assert.equal(result.coverage.riskFactors.totalIndexedEntriesAfterFilters, 2);
+    assert.equal(result.coverage.riskFactors.uniqueRecordingsAfterFilters, 1);
+    assert.equal(result.coverage.riskFactors.candidateEntriesBeforeLimit, 2);
+    assert.match(result.coverage.warnings.join("\n"), /one recording may appear more than once/);
+  });
+});
+
+test("local search coverage warns on risky query shapes", async () => {
+  await withTempStore(async (storeDir) => {
+    const paths = resolveStorePaths(storeDir);
+    const first = recording({ id: "rec_1", name: "Planning", content: "Discuss project context." });
+    await putRecordingSnapshot({ paths, file: first.file, details: first.details });
+
+    const result = await searchStore({ paths, query: "Speaker 1 Al project", limit: 5 });
+    const warnings = result.coverage.warnings.join("\n");
+
+    assert.match(warnings, /generic speaker\/unknown terms/);
+    assert.match(warnings, /very short terms or aliases/);
+    assert.match(warnings, /Multi-term fuzzy search/);
   });
 });
 
