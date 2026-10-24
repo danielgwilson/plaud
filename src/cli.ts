@@ -8,6 +8,7 @@ import { exportRecordings } from "./export.js";
 import { downloadRecording } from "./download.js";
 import { resolveAuthToken } from "./plaud-api.js";
 import { fail, makeError, ok, printJson } from "./output.js";
+import { parseSegmentAssignments, parseSpeakerMap, planSpeakerApply, SpeakerApplyInputError } from "./speakers.js";
 import { captureTokenFromBrowser, importTokenFromHar, saveToken, validateToken } from "./auth.js";
 import {
   clearStore,
@@ -1040,6 +1041,130 @@ recordingSpeakersCmd
       const res = await patchFile({ token, fileId: id, body: { trans_result: updated, support_mul_summ: true } });
       printJson(ok({ id, action: "files.speakers.rename", dryRun: false, from, to, match, changed, response: res }));
     } catch (err: any) {
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+// `--map` / `--segments` take inline JSON, or `@path` to read a JSON file.
+async function readJsonArg(value: string, flag: string): Promise<unknown> {
+  let raw = value;
+  if (value.startsWith("@")) {
+    try {
+      raw = await fs.readFile(value.slice(1), "utf8");
+    } catch {
+      throw new SpeakerApplyInputError(`${flag}: cannot read file ${value.slice(1)}.`);
+    }
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new SpeakerApplyInputError(`${flag} must be valid JSON (or @path to a JSON file).`);
+  }
+}
+
+recordingSpeakersCmd
+  .command("apply")
+  .description("Apply a whole speaker-name assignment to one recording in a single write")
+  .argument("<id>", "Recording id")
+  .option("--map <json|@file>", 'JSON object of original label -> new name (e.g. {"Speaker 1":"Person A"})')
+  .option("--segments <json|@file>", "JSON array of per-segment names: [{start_time,end_time,speaker}] or [{segment_uid,speaker}]")
+  .option("--overwrite", "Also replace names that already differ from the diarizer label", false)
+  .option("--expect-version <n>", "Fail with CONFLICT (exit 2) without writing if the recording version differs")
+  .option("--no-summary", "Do not rewrite speaker labels in the AI summary")
+  .option("--dry-run", "Show what would change without saving", false)
+  .option("--json", "Print JSON")
+  .action(async (id: string, opts: any) => {
+    let map: Record<string, string> | undefined;
+    let segments: ReturnType<typeof parseSegmentAssignments> | undefined;
+    let expectVersion: number | undefined;
+    try {
+      if (opts.map === undefined && opts.segments === undefined) {
+        throw new SpeakerApplyInputError("Provide --map and/or --segments.");
+      }
+      if (opts.map !== undefined) map = parseSpeakerMap(await readJsonArg(String(opts.map), "--map"));
+      if (opts.segments !== undefined) segments = parseSegmentAssignments(await readJsonArg(String(opts.segments), "--segments"));
+      planSpeakerApply({ transResult: [], map, segments }); // fail on bad assignments before any request
+      if (opts.expectVersion !== undefined) {
+        if (!/^\d+$/.test(String(opts.expectVersion))) throw new SpeakerApplyInputError("--expect-version must be a non-negative integer.");
+        expectVersion = Number(opts.expectVersion);
+      }
+    } catch (err: any) {
+      if (!(err instanceof SpeakerApplyInputError)) throw err;
+      process.exitCode = 2;
+      printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+      return;
+    }
+
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    const { getRecordingDetailsBatch, patchFile } = await import("./plaud-api.js");
+    try {
+      const list = await getRecordingDetailsBatch({ token, ids: [id] });
+      const details = Array.isArray(list) ? list.find((d: any) => String(d?.id || "") === String(id)) : null;
+      if (!details) {
+        process.exitCode = 1;
+        printJson(fail(makeError(null, { code: "NOT_FOUND", message: "Recording not found (or details unavailable)." })));
+        return;
+      }
+
+      const versionRead = typeof details.version === "number" ? details.version : null;
+      if (expectVersion !== undefined && versionRead !== expectVersion) {
+        process.exitCode = 2;
+        printJson(
+          fail(
+            makeError(null, {
+              code: "CONFLICT",
+              message: `Recording version is ${versionRead ?? "unknown"}, expected ${expectVersion}. Re-read the recording (\`plaud files get ${id} --json\`) and retry.`,
+            }),
+            { versionRead, expectedVersion: expectVersion },
+          ),
+        );
+        return;
+      }
+
+      const plan = planSpeakerApply({
+        transResult: extractTransResult(details),
+        aiContent: details.ai_content,
+        map,
+        segments,
+        overwrite: !!opts.overwrite,
+        summary: opts.summary !== false,
+      });
+
+      const summaryChanged = plan.summaryReplacements > 0;
+      const dryRun = !!opts.dryRun;
+      const data = {
+        id,
+        action: "files.speakers.apply",
+        dryRun,
+        versionRead,
+        changed: plan.changed,
+        alreadyApplied: plan.alreadyApplied,
+        skippedRenamed: plan.skippedRenamed,
+        unmatchedLabels: plan.unmatchedLabels,
+        unmatchedSegments: plan.unmatchedSegments,
+        summaryReplacements: plan.summaryReplacements,
+        totalSegments: plan.totalSegments,
+      };
+
+      // Nothing to write is a clean no-op, so re-running the same assignment is safe.
+      if (dryRun || (plan.changed === 0 && !summaryChanged)) {
+        printJson(ok({ ...data, written: false }));
+        return;
+      }
+
+      const body: Record<string, unknown> = { support_mul_summ: true };
+      if (plan.changed > 0) body.trans_result = plan.transResult;
+      if (summaryChanged) body.ai_content = plan.aiContent;
+      const res = await patchFile({ token, fileId: id, body });
+      printJson(ok({ ...data, written: true, response: { status: res?.status ?? null } }));
+    } catch (err: any) {
+      if (err instanceof SpeakerApplyInputError) {
+        process.exitCode = 2;
+        printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+        return;
+      }
       process.exitCode = 1;
       printJson(fail(makeError(err)));
     }
