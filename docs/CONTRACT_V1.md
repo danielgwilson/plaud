@@ -17,6 +17,7 @@ Note: `plaud recordings …` is supported as an alias for `plaud files …`.
   - `plaud files tags clear`
   - `plaud files rerun`
   - `plaud files speakers rename`
+  - `plaud files speakers apply`
   - `plaud files sync`
   - `plaud files search`
   - `plaud files dupes`
@@ -71,6 +72,7 @@ These are best-effort and may expand in the future:
 - `UPSTREAM_5XX` (exit `1`, `retryable: true`)
 - `TIMEOUT` (exit `1`, `retryable: true`)
 - `VALIDATION` (exit `2`)
+- `CONFLICT` (exit `2`)
 - `CHECK_FAILED` (exit `1`)
 - `UNKNOWN` (exit `1`)
 
@@ -468,3 +470,50 @@ Success:
 ```json
 { "ok": true, "data": { "id": "…", "action": "files.speakers.rename", "dryRun": false, "changed": 10 } }
 ```
+
+### `plaud files speakers apply <id> --map '{"Speaker 1":"Person A","Speaker 2":"Person B"}'`
+
+Applies a whole speaker-name assignment to one recording in a single `PATCH /file/{id}`. Always prints JSON.
+
+Success:
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "…",
+    "action": "files.speakers.apply",
+    "dryRun": false,
+    "versionRead": 7,
+    "changed": 10,
+    "alreadyApplied": 0,
+    "skippedRenamed": 0,
+    "unmatchedLabels": [],
+    "unmatchedSegments": 0,
+    "summaryReplacements": 3,
+    "totalSegments": 162,
+    "written": true,
+    "response": { "status": 0 }
+  }
+}
+```
+
+Failure when `--expect-version` does not match (`exit 2`, nothing written):
+```json
+{
+  "ok": false,
+  "error": { "code": "CONFLICT", "message": "Recording version is 8, expected 7. Re-read the recording (`plaud files get <id> --json`) and retry.", "retryable": false },
+  "meta": { "versionRead": 8, "expectedVersion": 7 }
+}
+```
+
+Notes:
+- `--map <json|@file>` is an object of original (diarizer) label to new name. It matches segments by `original_speaker`.
+- `--segments <json|@file>` is an array of per-segment names: `[{ "start_time": 1234, "end_time": 5678, "speaker": "Person A" }]`. An entry matches by `segment_uid` when it has one, otherwise by exact `start_time` and `end_time` (ms). Use it when one original label must be split across people. It wins over `--map` per segment. Provide at least one of `--map` and `--segments`.
+- `@file` reads the JSON from that file path. Names must be non-empty strings; invalid input fails with `VALIDATION` (`exit 2`) before any request is made.
+- By default only segments that are still generic (`speaker` equals `original_speaker`) change; names already typed or applied are never overwritten. They are counted in `skippedRenamed`. Pass `--overwrite` to replace them.
+- `alreadyApplied` counts matched segments that already carry the requested name. They are not written and not counted as skipped.
+- `unmatchedLabels` lists `--map` labels no segment uses. `unmatchedSegments` counts `--segments` entries that matched no segment.
+- `versionRead` is the recording `version` before the write (`null` when absent). Pass it as `--expect-version <n>` to fail with `CONFLICT` instead of overwriting a recording that changed since you read it.
+- Unless `--no-summary` is set, whole-token occurrences of each `--map` label in a string `ai_content` are replaced with the new name, but only when every segment with that original label ended up with the same new name. `Speaker 1` never matches inside `Speaker 10`. A non-string `ai_content` is left alone. `summaryReplacements` is the number of replacements.
+- If nothing would change the command returns `ok` with `changed: 0`, `written: false`, and makes no write, so re-running the same assignment is safe. `--dry-run` computes the same result and never writes.
+- The write body carries `support_mul_summ: true`, `trans_result` only when segments changed, and `ai_content` only when the summary changed.
