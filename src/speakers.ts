@@ -44,6 +44,18 @@ export function parseSpeakerMap(value: unknown): Record<string, string> {
   return out;
 }
 
+export function parseSummaryMap(value: unknown): Record<string, string> {
+  if (!isObject(value)) {
+    throw new SpeakerApplyInputError('--summary-map must be a JSON object, e.g. {"Pat Lee":"Speaker 2"}.');
+  }
+  const out: Record<string, string> = {};
+  for (const [text, name] of Object.entries(value)) {
+    if (!text.trim()) throw new SpeakerApplyInputError("--summary-map keys must not be empty.");
+    out[text] = cleanName(name, `--summary-map replacement for "${text}"`);
+  }
+  return out;
+}
+
 export function parseSegmentAssignments(value: unknown): SegmentAssignment[] {
   if (!Array.isArray(value)) {
     throw new SpeakerApplyInputError("--segments must be a JSON array of segment assignments.");
@@ -113,6 +125,7 @@ export function planSpeakerApply({
   aiContent,
   map = {},
   segments = [],
+  summaryMap = {},
   overwrite = false,
   summary = true,
 }: {
@@ -120,12 +133,17 @@ export function planSpeakerApply({
   aiContent?: unknown;
   map?: Record<string, string>;
   segments?: SegmentAssignment[];
+  summaryMap?: Record<string, string>;
   overwrite?: boolean;
   summary?: boolean;
 }): SpeakerApplyPlan {
   const labelMap = new Map(Object.entries(map));
-  if (labelMap.size === 0 && segments.length === 0) {
-    throw new SpeakerApplyInputError("Provide at least one --map entry or --segments assignment.");
+  const explicit = Object.entries(summaryMap);
+  if (labelMap.size === 0 && segments.length === 0 && explicit.length === 0) {
+    throw new SpeakerApplyInputError("Provide at least one --map entry, --segments assignment, or --summary-map entry.");
+  }
+  if (!summary && explicit.length > 0) {
+    throw new SpeakerApplyInputError("--summary-map cannot be combined with --no-summary.");
   }
 
   // Per-segment assignments win over --map. Entries with a segment_uid match by uid only.
@@ -203,6 +221,12 @@ export function planSpeakerApply({
       const names = namesByOriginal.get(label);
       const key = normalizeLabel(label);
       if (names && names.size === 1 && names.has(name) && key !== name) replacements.set(key, name);
+    }
+    // Explicit summary text (a name typed earlier, or a first name) is replaced as given and wins
+    // over a derived label replacement for the same text.
+    for (const [text, name] of explicit) {
+      const key = normalizeLabel(text);
+      if (key !== name) replacements.set(key, name);
     }
     if (replacements.size > 0) {
       const res = replaceLabels(aiContent, replacements);

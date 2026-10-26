@@ -135,7 +135,10 @@ test("files speakers apply validates its inputs before touching auth or the netw
   await withTempDir(async (tmp) => {
     const missingFile = path.join(tmp, "nope.json");
     const cases: Array<{ args: string[]; message: RegExp }> = [
-      { args: [], message: /Provide --map and\/or --segments/ },
+      { args: [], message: /Provide --map, --segments, and\/or --summary-map/ },
+      { args: ["--summary-map", "[]"], message: /--summary-map must be a JSON object/ },
+      { args: ["--summary-map", '{"Pat Lee":""}'], message: /must not be empty/ },
+      { args: ["--summary-map", '{"Pat Lee":"Speaker 2"}', "--no-summary"], message: /cannot be combined with --no-summary/ },
       { args: ["--map", "{not json"], message: /--map must be valid JSON/ },
       { args: ["--map", "[]"], message: /--map must be a JSON object/ },
       { args: ["--map", "{}"], message: /at least one --map entry/ },
@@ -262,6 +265,21 @@ test("files speakers apply reads --map from @file and --no-summary leaves ai_con
     assert.equal(parsed.data.summaryReplacements, 0);
     assert.equal(r.writes.length, 1);
     assert.equal("ai_content" in r.writes[0].body, false);
+  });
+});
+
+test("files speakers apply --summary-map alone writes only ai_content", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording(), ai_content: "Pat Lee opened. Pat agreed. Patrick left." };
+    const r = await runWithFakePlaud(tmp, detail, ["--summary-map", '{"Pat Lee":"Speaker 2","Pat":"Speaker 2"}']);
+    assert.equal(r.exitCode, 0, r.stderr);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.data.changed, 0);
+    assert.equal(parsed.data.summaryReplacements, 2);
+    assert.equal(parsed.data.written, true);
+    assert.equal(r.writes.length, 1);
+    assert.equal("trans_result" in r.writes[0].body, false);
+    assert.equal(r.writes[0].body.ai_content, "Speaker 2 opened. Speaker 2 agreed. Patrick left.");
   });
 });
 

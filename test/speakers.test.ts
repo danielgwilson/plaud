@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   parseSegmentAssignments,
   parseSpeakerMap,
+  parseSummaryMap,
   planSpeakerApply,
   SpeakerApplyInputError,
 } from "../src/speakers.js";
@@ -255,4 +256,44 @@ test("parseSegmentAssignments validates shape", () => {
     [{ segment_uid: 5, speaker: "Ada" }],
   ];
   for (const b of bad) assert.throws(() => parseSegmentAssignments(b), SpeakerApplyInputError);
+});
+
+test("summaryMap alone rewrites the summary without touching segments", () => {
+  const aiContent = "Ada Lovelace opened. Ada agreed with Alan. Adams left. **Ada Lovelace**'s notes.";
+  const plan = planSpeakerApply({
+    transResult: fixture(),
+    aiContent,
+    summaryMap: { "Ada Lovelace": "Speaker 1", Ada: "Speaker 1" },
+  });
+  assert.equal(plan.changed, 0);
+  assert.deepEqual(plan.transResult, fixture());
+  assert.equal(plan.summaryReplacements, 3);
+  assert.equal(plan.aiContent, "Speaker 1 opened. Speaker 1 agreed with Alan. Adams left. **Speaker 1**'s notes.");
+});
+
+test("summaryMap wins over a derived label replacement and joins the same single pass", () => {
+  const plan = planSpeakerApply({
+    transResult: fixture(),
+    aiContent: "Speaker 1 met Pat Lee.",
+    map: { "Speaker 1": "Ada Lovelace" },
+    summaryMap: { "Pat Lee": "Speaker 1" },
+  });
+  assert.equal(plan.changed, 2);
+  assert.equal(plan.aiContent, "Ada Lovelace met Speaker 1.");
+  assert.equal(plan.summaryReplacements, 2);
+});
+
+test("summaryMap cannot be combined with summary: false, and an empty request still fails", () => {
+  assert.throws(
+    () => planSpeakerApply({ transResult: fixture(), summaryMap: { Ada: "Speaker 1" }, summary: false }),
+    SpeakerApplyInputError,
+  );
+  assert.throws(() => planSpeakerApply({ transResult: fixture(), summaryMap: {} }), SpeakerApplyInputError);
+});
+
+test("parseSummaryMap validates shape and trims replacements", () => {
+  assert.deepEqual(parseSummaryMap({ "Pat Lee": "  Speaker 2 " }), { "Pat Lee": "Speaker 2" });
+  for (const bad of [null, [], "Pat", 3, { Pat: 3 }, { Pat: "" }, { " ": "Speaker 2" }]) {
+    assert.throws(() => parseSummaryMap(bad), SpeakerApplyInputError);
+  }
 });
