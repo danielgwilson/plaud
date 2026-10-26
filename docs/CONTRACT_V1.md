@@ -508,7 +508,9 @@ Failure when `--expect-version` does not match (`exit 2`, nothing written):
 
 Notes:
 - `--map <json|@file>` is an object of original (diarizer) label to new name. It matches segments by `original_speaker`.
-- `--segments <json|@file>` is an array of per-segment names: `[{ "start_time": 1234, "end_time": 5678, "speaker": "Person A" }]`. An entry matches by `segment_uid` when it has one, otherwise by exact `start_time` and `end_time` (ms). Use it when one original label must be split across people. It wins over `--map` per segment. Provide at least one of `--map` and `--segments`.
+- `--segments <json|@file>` is an array of per-segment names: `[{ "start_time": 1234, "end_time": 5678, "speaker": "Person A" }]`. An entry matches by `segment_uid` when it has one, otherwise by exact `start_time` and `end_time` (ms). Use it when one original label must be split across people. It wins over `--map` per segment.
+- `--summary-map <json|@file>` is an object of summary text to replacement, for text the label rule below cannot reach (a name that was already in the summary, or a first name). Each key is replaced as a whole word in a string `ai_content`, in the same single pass as the label rule, and wins over it for the same text. On its own it writes only `ai_content`. It cannot be combined with `--no-summary`.
+- Provide at least one of `--map`, `--segments`, and `--summary-map`.
 - `@file` reads the JSON from that file path. Names must be non-empty strings; invalid input fails with `VALIDATION` (`exit 2`) before any request is made.
 - By default only segments that are still generic (`speaker` equals `original_speaker`) change; names already typed or applied are never overwritten. They are counted in `skippedRenamed`. Pass `--overwrite` to replace them.
 - `alreadyApplied` counts matched segments that already carry the requested name. They are not written and not counted as skipped.

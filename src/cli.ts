@@ -8,7 +8,7 @@ import { exportRecordings } from "./export.js";
 import { downloadRecording } from "./download.js";
 import { resolveAuthToken } from "./plaud-api.js";
 import { fail, makeError, ok, printJson } from "./output.js";
-import { parseSegmentAssignments, parseSpeakerMap, planSpeakerApply, SpeakerApplyInputError } from "./speakers.js";
+import { parseSegmentAssignments, parseSpeakerMap, parseSummaryMap, planSpeakerApply, SpeakerApplyInputError } from "./speakers.js";
 import { captureTokenFromBrowser, importTokenFromHar, saveToken, validateToken } from "./auth.js";
 import {
   clearStore,
@@ -1069,6 +1069,7 @@ recordingSpeakersCmd
   .argument("<id>", "Recording id")
   .option("--map <json|@file>", 'JSON object of original label -> new name (e.g. {"Speaker 1":"Person A"})')
   .option("--segments <json|@file>", "JSON array of per-segment names: [{start_time,end_time,speaker}] or [{segment_uid,speaker}]")
+  .option("--summary-map <json|@file>", 'JSON object of summary text -> replacement, applied as whole words (e.g. {"Pat Lee":"Speaker 2"})')
   .option("--overwrite", "Also replace names that already differ from the diarizer label", false)
   .option("--expect-version <n>", "Fail with CONFLICT (exit 2) without writing if the recording version differs")
   .option("--no-summary", "Do not rewrite speaker labels in the AI summary")
@@ -1077,14 +1078,17 @@ recordingSpeakersCmd
   .action(async (id: string, opts: any) => {
     let map: Record<string, string> | undefined;
     let segments: ReturnType<typeof parseSegmentAssignments> | undefined;
+    let summaryMap: Record<string, string> | undefined;
     let expectVersion: number | undefined;
     try {
-      if (opts.map === undefined && opts.segments === undefined) {
-        throw new SpeakerApplyInputError("Provide --map and/or --segments.");
+      if (opts.map === undefined && opts.segments === undefined && opts.summaryMap === undefined) {
+        throw new SpeakerApplyInputError("Provide --map, --segments, and/or --summary-map.");
       }
       if (opts.map !== undefined) map = parseSpeakerMap(await readJsonArg(String(opts.map), "--map"));
       if (opts.segments !== undefined) segments = parseSegmentAssignments(await readJsonArg(String(opts.segments), "--segments"));
-      planSpeakerApply({ transResult: [], map, segments }); // fail on bad assignments before any request
+      if (opts.summaryMap !== undefined) summaryMap = parseSummaryMap(await readJsonArg(String(opts.summaryMap), "--summary-map"));
+      // Fail on bad assignments before any request.
+      planSpeakerApply({ transResult: [], map, segments, summaryMap, summary: opts.summary !== false });
       if (opts.expectVersion !== undefined) {
         if (!/^\d+$/.test(String(opts.expectVersion))) throw new SpeakerApplyInputError("--expect-version must be a non-negative integer.");
         expectVersion = Number(opts.expectVersion);
@@ -1128,6 +1132,7 @@ recordingSpeakersCmd
         aiContent: details.ai_content,
         map,
         segments,
+        summaryMap,
         overwrite: !!opts.overwrite,
         summary: opts.summary !== false,
       });

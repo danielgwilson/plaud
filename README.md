@@ -135,7 +135,7 @@ plaud files speakers rename <id> --from "Speaker 2" --to "Person A"
 plaud files speakers apply <id> --map '{"Speaker 1":"Person A","Speaker 2":"Person B"}' --dry-run
 ```
 
-`speakers apply` writes a whole assignment to one recording in a single request. `--map` (or `@file.json`) maps the original diarizer label to a name; `--segments` names individual segments by `segment_uid` or exact `start_time`/`end_time` when one label must be split across people. It only changes segments that are still generic (pass `--overwrite` to replace names already typed), rewrites matching labels in the AI summary unless `--no-summary`, and fails with `CONFLICT` if `--expect-version` no longer matches. Re-running the same assignment is a no-op. See `docs/CONTRACT_V1.md` for the output fields.
+`speakers apply` writes a whole assignment to one recording in a single request. `--map` (or `@file.json`) maps the original diarizer label to a name; `--segments` names individual segments by `segment_uid` or exact `start_time`/`end_time` when one label must be split across people. It only changes segments that are still generic (pass `--overwrite` to replace names already typed), rewrites matching labels in the AI summary unless `--no-summary`, and fails with `CONFLICT` if `--expect-version` no longer matches. `--summary-map '{"Pat Lee":"Speaker 2"}'` replaces other summary text as whole words, such as a wrong name or a first name; on its own it rewrites only the summary. Re-running the same assignment is a no-op. See `docs/CONTRACT_V1.md` for the output fields.
 
 ## Local Store, Search, and De-Dupe
 
