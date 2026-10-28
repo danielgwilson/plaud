@@ -8,6 +8,7 @@ import { exportRecordings } from "./export.js";
 import { downloadRecording } from "./download.js";
 import { resolveAuthToken } from "./plaud-api.js";
 import { fail, makeError, ok, printJson } from "./output.js";
+import { webUrl } from "./web.js";
 import { parseSegmentAssignments, parseSpeakerMap, parseSummaryMap, planSpeakerApply, SpeakerApplyInputError } from "./speakers.js";
 import { captureTokenFromBrowser, importTokenFromHar, saveToken, validateToken } from "./auth.js";
 import {
@@ -577,9 +578,10 @@ Coverage:
               name: item.name,
               createdAt: item.createdAt,
               modifiedAt: item.modifiedAt,
+              url: webUrl(item.id),
             })),
           }
-        : result;
+        : { ...result, items: result.items.map((item) => ({ ...item, url: webUrl(item.id) })) };
       printJson(
         ok(data, {
           localOnly: true,
@@ -729,6 +731,7 @@ filesCmd
         createdAt: string | null;
         modifiedAtMs: number | null;
         modifiedAt: string | null;
+        url: string;
       }> = [];
 
       function getNum(v: any): number | null {
@@ -811,6 +814,7 @@ filesCmd
             createdAt: msToIso(createdAtMs),
             modifiedAtMs,
             modifiedAt: msToIso(modifiedAtMs),
+            url: webUrl(id),
           });
           returned += 1;
 
@@ -1439,12 +1443,14 @@ filesCmd
       }
 
       if (opts.json) {
-        printJson(ok({ recording: details }));
+        printJson(ok({ recording: details, url: webUrl(String(details.id)) }));
         return;
       }
 
       // eslint-disable-next-line no-console
       console.log(`${details.id}  ${details.filename || ""}`.trim());
+      // eslint-disable-next-line no-console
+      console.log(webUrl(String(details.id)));
     } catch (err: any) {
       process.exitCode = 1;
       if (opts.json) {
@@ -1453,6 +1459,20 @@ filesCmd
       }
       throw err;
     }
+  });
+
+filesCmd
+  .command("link")
+  .description("Print the Plaud web app link for a recording (no auth or network needed)")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action((id: string, opts: { json?: boolean }) => {
+    if (opts.json) {
+      printJson(ok({ id, url: webUrl(id) }));
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log(webUrl(id));
   });
 
 filesCmd

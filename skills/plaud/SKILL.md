@@ -26,6 +26,7 @@ Hard filters and tidy result lists are not proof of completeness:
 - Sanity check: `plaud doctor --json`
 - Browse recent files: `plaud files list --limit 25` (table) or `plaud files list --json --limit 25`
 - Drill in: `plaud files get <id> --json`
+- Link for a person to open: `plaud files link <id>` prints the web app URL; `files list`, `files get` and `files search` JSON carry it as `url`
 - Pull content into an explicit scratch/export directory: `plaud files download <id> --out <dir> --what transcript,summary,json`
 
 ## Common tasks
