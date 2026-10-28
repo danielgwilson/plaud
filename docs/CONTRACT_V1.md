@@ -189,7 +189,8 @@ Success:
         "createdAtMs": 1700000000000,
         "createdAt": "2024-01-01T00:00:00.000Z",
         "modifiedAtMs": 1700000000000,
-        "modifiedAt": "2024-01-01T00:00:00.000Z"
+        "modifiedAt": "2024-01-01T00:00:00.000Z",
+        "url": "https://web.plaud.ai/file/…"
       }
     ],
     "page": { "limit": 25, "skip": 0, "nextSkip": 25, "hasMore": true, "scanned": 25 },
@@ -204,7 +205,16 @@ Success:
 
 Success:
 ```json
-{ "ok": true, "data": { "recording": { "id": "…", "trans_result": [] } } }
+{ "ok": true, "data": { "recording": { "id": "…", "trans_result": [] }, "url": "https://web.plaud.ai/file/…" } }
+```
+
+`url` opens the recording in the Plaud web app. `files list` and `files search` items carry the same field.
+
+### `plaud files link <id> --json`
+
+Builds the link locally, with no auth or network call:
+```json
+{ "ok": true, "data": { "id": "…", "url": "https://web.plaud.ai/file/…" } }
 ```
 
 Failure (not found):

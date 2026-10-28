@@ -169,7 +169,13 @@ test("files speakers apply validates its inputs before touching auth or the netw
 
 // Runs the CLI with a synthetic in-process fetch (no network): POST /file/list returns `detail`,
 // every request is appended to a log file so tests can assert on the writes.
-async function runWithFakePlaud(tmp: string, detail: unknown, args: string[], files: Record<string, string> = {}) {
+async function runWithFakePlaud(
+  tmp: string,
+  detail: unknown,
+  args: string[],
+  files: Record<string, string> = {},
+  command: string[] = ["files", "speakers", "apply", "rec-1"],
+) {
   const preload = path.join(tmp, "fake-plaud-fetch.mjs");
   const detailPath = path.join(tmp, "detail.json");
   const logPath = path.join(tmp, "requests.log");
@@ -191,7 +197,7 @@ async function runWithFakePlaud(tmp: string, detail: unknown, args: string[], fi
   await fs.writeFile(detailPath, JSON.stringify(detail));
   await fs.writeFile(logPath, "");
   for (const [name, content] of Object.entries(files)) await fs.writeFile(path.join(tmp, name), content);
-  const r = await runCli(["files", "speakers", "apply", "rec-1", ...args], {
+  const r = await runCli([...command, ...args], {
     XDG_CONFIG_HOME: path.join(tmp, "config"),
     PLAUD_AUTH_TOKEN: "synthetic-test-token",
     NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
@@ -353,6 +359,28 @@ test("files speakers apply guard reports names a human already typed", async () 
       r.writes[0].body.trans_result.map((s: any) => s.speaker),
       ["Ada (typed)", "Speaker 2", "Ada Lovelace"],
     );
+  });
+});
+
+test("files link prints the web app link without auth", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "link", "rec-1", "--json"], { XDG_CONFIG_HOME: tmp, PLAUD_AUTH_TOKEN: "" });
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).data, { id: "rec-1", url: "https://web.plaud.ai/file/rec-1" });
+    const plain = await runCli(["files", "link", "rec-1"], { XDG_CONFIG_HOME: tmp, PLAUD_AUTH_TOKEN: "" });
+    assert.equal(plain.stdout, "https://web.plaud.ai/file/rec-1");
+  });
+});
+
+test("files get and files list carry the web app link", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording(), filename: "Weekly sync", start_time: 1_700_000_000_000 };
+    const got = await runWithFakePlaud(tmp, detail, ["--json"], {}, ["files", "get", "rec-1"]);
+    assert.equal(got.exitCode, 0, got.stderr);
+    assert.equal(JSON.parse(got.stdout).data.url, "https://web.plaud.ai/file/rec-1");
+    const listed = await runWithFakePlaud(tmp, detail, ["--json", "--limit", "1"], {}, ["files", "list"]);
+    assert.equal(listed.exitCode, 0, listed.stderr);
+    assert.equal(JSON.parse(listed.stdout).data.items[0].url, "https://web.plaud.ai/file/rec-1");
   });
 });
 

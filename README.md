@@ -125,7 +125,10 @@ plaud files export --out ./plaud-transcripts --formats txt,json,md
 plaud files list --json --limit 10
 plaud files download <id> --out ./plaud-download --what transcript,summary,json
 plaud files download <id> --out ./plaud-download --what audio --audio-format opus
+plaud files link <id>
 ```
+
+`files link` prints the recording's Plaud web app URL without calling the API. `files list`, `files get` and `files search` JSON include the same link as `url`.
 
 ## Speaker labels
 
