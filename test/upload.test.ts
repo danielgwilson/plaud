@@ -118,10 +118,10 @@ test("extractFileId reads the id from either response shape", () => {
   assert.equal(extractFileId({}), "");
 });
 
-type Calls = { presign: any[]; puts: Array<{ url: string; size: number }>; merge: any[]; confirm: any[]; logs: string[]; transcoded: string[] };
+type Calls = { presign: any[]; puts: Array<{ url: string; size: number }>; merge: any[]; confirm: any[]; logs: string[]; transcoded: string[]; tags: string[][] };
 
-function fakeDeps(overrides: { durationSec?: number | null; failPutsOnce?: number; exists?: boolean; limitMb?: number } = {}): { deps: UploadDeps; calls: Calls } {
-  const calls: Calls = { presign: [], puts: [], merge: [], confirm: [], logs: [], transcoded: [] };
+function fakeDeps(overrides: { durationSec?: number | null; failPutsOnce?: number; exists?: boolean; limitMb?: number; confirmFails?: boolean } = {}): { deps: UploadDeps; calls: Calls } {
+  const calls: Calls = { presign: [], puts: [], merge: [], confirm: [], logs: [], transcoded: [], tags: [] };
   let putFailures = overrides.failPutsOnce ?? 0;
   const deps: UploadDeps = {
     api: {
@@ -144,7 +144,12 @@ function fakeDeps(overrides: { durationSec?: number | null; failPutsOnce?: numbe
         calls.merge.push(body);
         return {};
       },
+      tag: async (fileId, tagId) => {
+        calls.tags.push([fileId, tagId]);
+        return {};
+      },
       confirm: async (body) => {
+        if (overrides.confirmFails) throw new Error("timeout");
         calls.confirm.push(body);
         return { data_file: { id: "new-file-id", filename: body.filename } };
       },
@@ -269,4 +274,38 @@ test("putPart sends no Plaud auth header and returns the ETag", async () => {
   const headers = (captured?.init?.headers ?? {}) as Record<string, string>;
   assert.equal(headers.authorization, undefined);
   assert.equal(headers["content-type"], undefined);
+});
+
+test("uploadAudioFile stops other workers when a part fails", async () => {
+  await withTempDir(async (tmp) => {
+    const file = path.join(tmp, "big.mp3");
+    await fs.writeFile(file, Buffer.alloc(PART_SIZE * 20));
+    const { deps, calls } = fakeDeps();
+    let started = 0;
+    deps.api.putPart = async (url) => {
+      started++;
+      if (url.endsWith("part-2")) throw new Error("403");
+      await new Promise((r) => setTimeout(r, 5));
+      calls.puts.push({ url, size: 0 });
+      return '"e"';
+    };
+    await assert.rejects(uploadAudioFile(file, {}, deps), (e: any) => e.code === "UPLOAD_NETWORK_ERROR");
+    const after = started;
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(started, after, "no part starts after the call has returned");
+    assert.ok(started < 20);
+    assert.equal(calls.confirm.length, 0);
+  });
+});
+
+test("uploadAudioFile reports an unconfirmed upload as CONFIRM_UNCERTAIN and tags after confirm", async () => {
+  await withTempDir(async (tmp) => {
+    const file = path.join(tmp, "a.mp3");
+    await fs.writeFile(file, Buffer.alloc(10));
+    await assert.rejects(uploadAudioFile(file, {}, fakeDeps({ confirmFails: true }).deps), (e: any) => e.code === "CONFIRM_UNCERTAIN" && /plaud files list/.test(e.message));
+    const tagged = fakeDeps();
+    const r = await uploadAudioFile(file, { tagId: "t1" }, tagged.deps);
+    assert.equal(r.tagged, true);
+    assert.deepEqual(tagged.calls.tags, [["new-file-id", "t1"]]);
+  });
 });

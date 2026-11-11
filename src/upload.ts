@@ -223,6 +223,7 @@ export type UploadApi = {
   putPart: (url: string, data: Buffer) => Promise<string>;
   merge: (body: ReturnType<typeof buildMergeBody>) => Promise<unknown>;
   confirm: (body: Record<string, unknown>) => Promise<any>;
+  tag: (fileId: string, tagId: string) => Promise<unknown>;
 };
 
 export type UploadDeps = {
@@ -237,6 +238,7 @@ export type UploadDeps = {
 
 export type UploadResult = {
   id: string;
+  tagged: boolean;
   title: string;
   fileType: "MP3";
   transcoded: boolean;
@@ -301,6 +303,9 @@ export async function uploadAudioFile(filePath: string, opts: UploadOptions, dep
   let tmpDir: string | null = null;
   try {
     if (!isMp3) {
+      // Refuse an over-long or empty source before spending minutes converting it.
+      const sourceDuration = await deps.probeDurationSec(abs);
+      validateDuration(sourceDuration);
       tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "plaud-upload-"));
       uploadPath = path.join(tmpDir, "upload.mp3");
       deps.log(`Converting ${path.basename(abs)} to MP3 (mono, 16 kHz), like the web app...`);
@@ -326,18 +331,26 @@ export async function uploadAudioFile(filePath: string, opts: UploadOptions, dep
     const etags: string[] = new Array(parts.length);
     let next = 0;
     let done = 0;
+    let failure: unknown = null;
     const worker = async () => {
-      while (true) {
+      while (failure === null) {
         const i = next++;
         if (i >= parts.length) return;
         const part = parts[i];
-        const data = await readSlice(uploadPath, part.start, part.end);
-        etags[i] = await putWithRetry(deps, presigned.part_urls[i], data, part.partNumber);
+        try {
+          const data = await readSlice(uploadPath, part.start, part.end);
+          etags[i] = await putWithRetry(deps, presigned.part_urls[i], data, part.partNumber, () => failure !== null);
+        } catch (err) {
+          failure ??= err;
+          return;
+        }
         done++;
         deps.log(`Uploaded part ${done}/${parts.length} (${Math.floor((done / parts.length) * 100)}%)`);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, parts.length) }, worker));
+    // allSettled: wait for every worker to stop before cleaning up or reporting.
+    await Promise.allSettled(Array.from({ length: Math.min(PART_CONCURRENCY, parts.length) }, worker));
+    if (failure !== null) throw failure;
 
     deps.log("Finalizing...");
     await deps.api.merge(buildMergeBody({ uploadId: presigned.upload_id, objectName: presigned.object_name, etags }));
@@ -352,19 +365,39 @@ export async function uploadAudioFile(filePath: string, opts: UploadOptions, dep
       serialNumber: deps.serial(),
       tagId: opts.tagId,
     });
-    const file = await deps.api.confirm(confirmBody);
+    let file: any;
+    try {
+      file = await deps.api.confirm(confirmBody);
+    } catch (err: any) {
+      // The upload may have gone through even though the answer did not arrive. Do not invite a blind retry.
+      throw new UploadError(
+        "CONFIRM_UNCERTAIN",
+        `Plaud did not confirm the upload (${err?.message || err}). The file may already exist: run \`plaud files list\` and look for "${title}" before retrying.`,
+      );
+    }
     const id = extractFileId(file);
     if (!id) throw new UploadError("UPLOAD_FAILED", "Plaud confirmed the upload but returned no file id.", { data: file });
 
-    return { id, title, fileType: "MP3", transcoded: !isMp3, sizeBytes: size, parts: parts.length, durationSec, file: file?.data_file || file?.data || file };
+    let tagged = false;
+    if (opts.tagId) {
+      try {
+        await deps.api.tag(id, opts.tagId);
+        tagged = true;
+      } catch (err: any) {
+        deps.log(`Uploaded, but tagging failed (${err?.message || err}). Use \`plaud files tags add ${opts.tagId} ${id}\`.`);
+      }
+    }
+
+    return { id, tagged, title, fileType: "MP3", transcoded: !isMp3, sizeBytes: size, parts: parts.length, durationSec, file: file?.data_file || file?.data || file };
   } finally {
-    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-async function putWithRetry(deps: UploadDeps, url: string, data: Buffer, partNumber: number): Promise<string> {
+async function putWithRetry(deps: UploadDeps, url: string, data: Buffer, partNumber: number, cancelled: () => boolean): Promise<string> {
   let lastErr: any;
   for (let attempt = 0; attempt <= PART_RETRIES; attempt++) {
+    if (cancelled()) throw new UploadError("UPLOAD_NETWORK_ERROR", "Stopped because another part failed.");
     try {
       return cleanEtag(await deps.api.putPart(url, data));
     } catch (err: any) {

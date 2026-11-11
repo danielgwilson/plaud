@@ -1501,6 +1501,7 @@ filesCmd
           ok({
             id: result.id,
             url,
+            tagged: result.tagged,
             title: result.title,
             fileType: result.fileType,
             transcoded: result.transcoded,
@@ -1519,6 +1520,7 @@ filesCmd
       process.exitCode = 1;
       const code = typeof err?.code === "string" && err?.name === "UploadError" ? err.code : undefined;
       const error = makeError(err, code ? { code } : {});
+      if (code === "UPLOAD_NETWORK_ERROR") error.retryable = true;
       if (opts.json) {
         printJson(fail(error));
         return;

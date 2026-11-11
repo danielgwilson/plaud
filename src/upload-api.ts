@@ -1,4 +1,4 @@
-import { listRecordings, plaudRequest } from "./plaud-api.js";
+import { listRecordings, plaudRequest, updateTags } from "./plaud-api.js";
 import {
   DEFAULT_LIMIT_MB,
   knownStatusFrom,
@@ -89,6 +89,9 @@ export function createUploadApi(token: string): UploadApi {
     async confirm(body) {
       // No automatic retry: a retried confirm could create a second file.
       return await call(token, "/file/confirm_upload", body, 0, 120_000);
+    },
+    async tag(fileId, tagId) {
+      return await updateTags({ token, fileIds: [fileId], filetagId: tagId });
     },
   };
 }
