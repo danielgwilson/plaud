@@ -1198,6 +1198,43 @@ filesCmd
   });
 
 filesCmd
+  .command("delete")
+  .description("Permanently delete recording(s) that are already in the trash. Cannot be undone")
+  .argument("<id...>", "Recording id(s), all of which must already be in the trash")
+  .option("--yes", "Confirm the permanent deletion", false)
+  .option("--json", "Print JSON")
+  .action(async (ids: string[], opts: { yes?: boolean }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    const { planPermanentDelete, describePlanRefusal, DeleteInputError } = await import("./delete.js");
+    const { getRecordingDetailsBatch, deleteFilesPermanently } = await import("./plaud-api.js");
+    try {
+      const wanted = ids.map(String);
+      const plan = planPermanentDelete(wanted, await getRecordingDetailsBatch({ token, ids: wanted }));
+      const refusal = describePlanRefusal(plan);
+      if (refusal) throw new DeleteInputError(refusal);
+      if (!opts.yes) {
+        throw new DeleteInputError(
+          `This permanently deletes ${plan.deletable.length} recording(s) from the trash and cannot be undone: ${plan.deletable.map((f) => `${f.id} ("${f.name}")`).join(", ")}. Re-run with --yes to confirm.`,
+        );
+      }
+      const res = await deleteFilesPermanently({ token, ids: plan.deletable.map((f) => f.id) });
+      // Check the outcome by reading the files back instead of trusting the reply.
+      const after = planPermanentDelete(plan.deletable.map((f) => f.id), await getRecordingDetailsBatch({ token, ids: plan.deletable.map((f) => f.id) }));
+      const stillThere = after.deletable.concat(after.notInTrash).map((f) => f.id);
+      printJson(ok({ action: "delete", requested: plan.deletable, deletedIds: plan.deletable.map((f) => f.id).filter((id) => !stillThere.includes(id)), stillPresentIds: stillThere, response: { status: res?.status ?? null } }));
+    } catch (err: any) {
+      if (err instanceof DeleteInputError) {
+        process.exitCode = 2;
+        printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+        return;
+      }
+      process.exitCode = 1;
+      printJson(fail(makeError(err)));
+    }
+  });
+
+filesCmd
   .command("restore")
   .description("Restore recording(s) from trash")
   .argument("<id...>", "Recording id(s)")

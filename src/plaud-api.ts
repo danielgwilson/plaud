@@ -441,3 +441,14 @@ export async function getTranscriptionQuota({ token }: { token: string }): Promi
   assertApiOk(res);
   return res;
 }
+
+/**
+ * Permanent deletion (DELETE /file/ with the ids as the body). Sent once, never retried: a retry after a lost
+ * reply would only report "not found". The caller checks the result by re-reading the files.
+ */
+export async function deleteFilesPermanently({ token, ids }: { token: string; ids: string[] }): Promise<any> {
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error("Missing file id(s)");
+  const res = await plaudRequest({ token, endpoint: "/file/", method: "DELETE", body: ids, retries: 0 });
+  assertApiOk(res);
+  return res;
+}
