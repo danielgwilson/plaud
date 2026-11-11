@@ -357,3 +357,43 @@ export async function deleteNote({ token, body }: { token: string; body: Record<
   assertApiOk(res);
   return res;
 }
+
+// The API reports a duplicate folder name as status -2, either in a 200 body or as an HTTP error.
+const isDuplicateFolder = (x: any) => x?.status === -2 || x?.data?.status === -2;
+
+export class FolderDuplicateError extends Error {
+  constructor() {
+    super("A folder with that name already exists.");
+    this.name = "FolderDuplicateError";
+  }
+}
+
+async function folderWrite(req: Parameters<typeof plaudRequest>[0]): Promise<any> {
+  let res: any;
+  try {
+    res = await plaudRequest(req);
+  } catch (err: any) {
+    if (isDuplicateFolder(err)) throw new FolderDuplicateError();
+    throw err;
+  }
+  if (isDuplicateFolder(res)) throw new FolderDuplicateError();
+  assertApiOk(res);
+  return res;
+}
+
+export async function createFolder({ token, body }: { token: string; body: { name: string; icon: string; color: string } }): Promise<PlaudTag> {
+  const res = await folderWrite({ token, endpoint: "/filetag/", method: "POST", body, retries: 0 });
+  const tag = res?.data_filetag;
+  if (!tag?.id) throw new Error("Plaud did not return the new folder.");
+  return tag as PlaudTag;
+}
+
+export async function updateFolder({ token, id, body }: { token: string; id: string; body: { name: string; icon: string; color: string } }): Promise<any> {
+  return await folderWrite({ token, endpoint: `/filetag/${encodeURIComponent(id)}`, method: "PATCH", body, retries: 1 });
+}
+
+export async function deleteFolder({ token, id }: { token: string; id: string }): Promise<any> {
+  const res = await plaudRequest({ token, endpoint: `/filetag/${encodeURIComponent(id)}`, method: "DELETE", retries: 1 });
+  assertApiOk(res);
+  return res;
+}

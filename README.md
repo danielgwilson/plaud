@@ -158,6 +158,23 @@ plaud files notes set <id> <noteId> --file summary.md
 - `transcript edit` replaces the text of one segment (zero-based index; the `trans_result` array in `files get --json`). `transcript replace` is a literal, case-sensitive find and replace across all segments. Both keep speaker names and timings, and `--dry-run` shows the change without writing it. Transcript writes replace the whole transcript, so use `--expect-version <n>` (from `versionRead`) to refuse if the recording changed since you read it, and `--expect-text` on `transcript edit` to guard against a shifted segment index.
 - `notes list` shows the summary and any other notes with their ids. `notes set` changes a note's text (the summary is a note); the summary's title is fixed by Plaud. `notes delete` removes a note, but Plaud refuses to delete the auto summary. To regenerate a summary instead, use `plaud files rerun <id> --wait`.
 
+## Folders (tags)
+
+Plaud's web app calls these folders; this CLI calls them tags. A file sits in at most one folder.
+
+```bash
+plaud files tags list --json
+plaud files tags create "Hiring" --color "#c149eb"
+plaud files tags rename "Hiring" --name "Hiring 2026"
+plaud files tags add <tagId> <fileId> [<fileId>...]   # move files into a folder
+plaud files tags clear <fileId>                        # take files out of their folder
+plaud files tags delete "Hiring 2026" --yes
+```
+
+- `rename` also changes `--icon` and `--color`. A folder can be named by id or by exact name (a name shared by two folders is refused; use the id).
+- **`delete` moves every file in the folder to the trash**, not just out of the folder. Clear the files you want to keep first, or bring them back with `plaud files restore <id>`. It needs `--yes`.
+- A duplicate folder name returns `DUPLICATE`.
+
 ## Speaker labels
 
 ```bash
