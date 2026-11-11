@@ -171,8 +171,8 @@ plaud files tags clear <fileId>                        # take files out of their
 plaud files tags delete "Hiring 2026" --yes
 ```
 
-- `rename` also changes `--icon` and `--color`. A folder can be named by id or by exact name (a name shared by two folders is refused; use the id).
-- **`delete` moves every file in the folder to the trash**, not just out of the folder. Clear the files you want to keep first, or bring them back with `plaud files restore <id>`. It needs `--yes`.
+- `rename` also changes `--icon` and `--color`. A folder can be named by its id or by its name (case-insensitive; a name shared by two folders is refused, so use the id).
+- **`delete` moves every file in the folder to the trash**, not just out of the folder. Without `--yes` it refuses and lists the files it would trash; with `--yes` it returns `trashedFileIds`, so `plaud files restore <ids...>` undoes it. Clear files you want to keep first.
 - A duplicate folder name returns `DUPLICATE`.
 
 ## Speaker labels

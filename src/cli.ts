@@ -1413,7 +1413,7 @@ recordingTagsCmd
 
 async function runFolder(fn: () => Promise<unknown>): Promise<void> {
   const { FolderInputError } = await import("./folders.js");
-  const { FolderDuplicateError } = await import("./plaud-api.js");
+  const { FolderDuplicateError, FolderDeleteUncertainError } = await import("./plaud-api.js");
   try {
     printJson(ok(await fn()));
   } catch (err: any) {
@@ -1423,7 +1423,7 @@ async function runFolder(fn: () => Promise<unknown>): Promise<void> {
       return;
     }
     process.exitCode = 1;
-    printJson(fail(makeError(err, err instanceof FolderDuplicateError ? { code: "DUPLICATE" } : {})));
+    printJson(fail(makeError(err, err instanceof FolderDuplicateError ? { code: "DUPLICATE" } : err instanceof FolderDeleteUncertainError ? { code: "CONFIRM_UNCERTAIN" } : {})));
   }
 }
 
@@ -1448,7 +1448,7 @@ recordingTagsCmd
 recordingTagsCmd
   .command("rename")
   .description("Rename a folder, or change its icon or color")
-  .argument("<tag>", "Folder id or exact name")
+  .argument("<tag>", "Folder id, or its name (case-insensitive; a name shared by two folders is refused)")
   .option("--name <name>", "New name")
   .option("--icon <code>", "New icon code")
   .option("--color <hex>", "New color like #c149eb")
@@ -1469,7 +1469,7 @@ recordingTagsCmd
 recordingTagsCmd
   .command("delete")
   .description("Delete a folder. Plaud also moves every file in it to the trash (undo with `files restore`)")
-  .argument("<tag>", "Folder id or exact name")
+  .argument("<tag>", "Folder id, or its name (case-insensitive; a name shared by two folders is refused)")
   .option("--yes", "Confirm the deletion", false)
   .option("--json", "Print JSON")
   .action(async (tag: string, opts: { yes?: boolean }) => {
@@ -1477,17 +1477,29 @@ recordingTagsCmd
     if (!token) return;
     await runFolder(async () => {
       const { findFolder, FolderInputError } = await import("./folders.js");
-      const { listTags, deleteFolder } = await import("./plaud-api.js");
+      const { listTags, deleteFolder, listFilesInFolder } = await import("./plaud-api.js");
       const current = findFolder(await listTags({ token }), tag);
-      if (!opts.yes) throw new FolderInputError(`This deletes the folder "${current.name}" (${current.id}) and Plaud moves every file in it to the trash. Re-run with --yes to confirm. First move files you want to keep out with \`plaud files tags clear <id>\`.`);
+      const files = await listFilesInFolder({ token, id: current.id });
+      if (!opts.yes) {
+        const shown = files.slice(0, 10).map((f) => `"${f.name}"`).join(", ");
+        const more = files.length > 10 ? `, and ${files.length - 10} more` : "";
+        throw new FolderInputError(
+          `This deletes the folder "${current.name}" (${current.id}) and Plaud moves its ${files.length} file(s) to the trash${files.length ? `: ${shown}${more}` : ""}. Re-run with --yes to confirm. Take files you want to keep out first with \`plaud files tags clear <id>\`.`,
+        );
+      }
       await deleteFolder({ token, id: current.id });
-      return { action: "tags.delete", deleted: current, note: "Plaud moves the folder's files to the trash; restore them with `plaud files restore <id>`." };
+      return {
+        action: "tags.delete",
+        deleted: current,
+        trashedFileIds: files.map((f) => f.id),
+        note: files.length ? "Plaud moved these files to the trash; bring them back with `plaud files restore <id>...`." : "The folder had no files.",
+      };
     });
   });
 
 recordingTagsCmd
   .command("add")
-  .description("Add a tag to one or more recordings")
+  .description("Move recording(s) into a folder (a file sits in one folder)")
   .argument("<tagId>", "Tag id")
   .argument("<id...>", "Recording id(s)")
   .option("--json", "Print JSON")
@@ -1506,7 +1518,7 @@ recordingTagsCmd
 
 recordingTagsCmd
   .command("clear")
-  .description("Clear all tags from one or more recordings")
+  .description("Take recording(s) out of their folder")
   .argument("<id...>", "Recording id(s)")
   .option("--json", "Print JSON")
   .action(async (ids: string[]) => {
