@@ -441,3 +441,24 @@ export async function getTranscriptionQuota({ token }: { token: string }): Promi
   assertApiOk(res);
   return res;
 }
+
+/** Like getRecordingDetailsBatch, but an error reply or unexpected shape throws instead of reading as "no files". */
+export async function getRecordingDetailsStrict({ token, ids }: { token: string; ids: string[] }): Promise<any[]> {
+  const res = await plaudRequest({ token, endpoint: "/file/list?support_mul_summ=true", method: "POST", body: ids });
+  assertApiOk(res);
+  if (!Array.isArray(res?.data_file_list)) throw new Error("Plaud returned an unexpected file lookup response.");
+  return res.data_file_list;
+}
+
+/**
+ * Permanent deletion (DELETE /file/ with the ids as the body). The server does NOT check that a file is in the
+ * trash: a raw call deletes an active file too (checked live on a throwaway clip). The trash check is the CLI's
+ * (src/delete.ts). Sent once, never retried: a retry after a lost reply would only report "not found". The caller
+ * checks the result by re-reading the files.
+ */
+export async function deleteFilesPermanently({ token, ids }: { token: string; ids: string[] }): Promise<any> {
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error("Missing file id(s)");
+  const res = await plaudRequest({ token, endpoint: "/file/", method: "DELETE", body: ids, retries: 0 });
+  assertApiOk(res);
+  return res;
+}

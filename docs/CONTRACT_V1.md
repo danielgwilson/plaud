@@ -12,6 +12,7 @@ Note: `plaud recordings …` is supported as an alias for `plaud files …`.
   - `plaud files download`
   - `plaud files export`
   - `plaud files trash`
+  - `plaud files delete`
   - `plaud files restore`
   - `plaud files tags add`
   - `plaud files tags clear`
@@ -266,6 +267,10 @@ Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`,
 ### `plaud account stats --json` and `plaud account quota --json`
 
 Read-only. `stats` returns `{ totalFiles, totalDays, totalDurationMs, totalTranscribedDurationMs, recent30DaysDailyAvgMs, previous30DaysDailyAvgMs, mostActiveHour, maxFilesInOneDay, maxDurationMsInOneDay }`, plus `daily: [{ day, files, durationMs }]` with `--daily`. `quota` returns `{ isStarter, canNotify, quota }`; `quota` is `null` on plans without a limit. `maxFilesInOneDay` and `maxDurationMsInOneDay` are two separate records (usually different days). `mostActiveHour` is passed through from Plaud and its timezone is not documented. Failures use the standard error codes (`AUTH_INVALID`, `UNKNOWN`, ...), exit 1.
+
+### `plaud files delete <id...> --yes`
+
+Permanent deletion of files already in the trash. Success: `{ action: "delete", requested, deletedIds, stillPresentIds, response }`; `stillPresentIds` is read back after the call; if it is not empty the result is a failure envelope (`DELETE_INCOMPLETE`, exit 1) carrying the same data in `meta`, and if the read-back itself fails the result is `CONFIRM_UNCERTAIN`. The server does not check the trash, so the CLI does. Without `--yes`, or when any id is not in the trash or not found, nothing is deleted and the result is `VALIDATION` (exit 2).
 
 ### `plaud files download <id>`
 
