@@ -175,6 +175,16 @@ plaud files tags delete "Hiring 2026" --yes
 - **`delete` moves every file in the folder to the trash** (within a few seconds), not just out of the folder. Without `--yes` it refuses and lists the files it would trash; with `--yes` it returns `trashedFileIds`, so `plaud files restore <ids...>` undoes it. Clear files you want to keep first.
 - A duplicate folder name returns `DUPLICATE`.
 
+## Account usage
+
+```bash
+plaud account stats            # files, hours recorded, recent daily average
+plaud account stats --json --daily
+plaud account quota --json
+```
+
+`stats` reads the same numbers as the web app's usage page. Durations are milliseconds, like `files list`. `quota` reports the transcription quota only for plans that have a limit; other plans answer `isStarter: false` with no quota. Both are read-only.
+
 ## Speaker labels
 
 ```bash

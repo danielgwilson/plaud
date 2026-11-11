@@ -195,6 +195,8 @@ async function runWithFakePlaud(
       '  else if (String(url).endsWith("/filetag/") && method === "POST") json = detail.__dup ? { status: -2, msg: "exists" } : { status: 0, data_filetag: { id: "new-tag", ...body } };',
       '  else if (String(url).includes("/filetag/")) json = detail.__dup ? { status: -2 } : { status: 0 };',
       '  else if (String(url).includes("/file/simple/web") && detail.__files) json = { status: 0, data_file_list: detail.__files };',
+      '  else if (String(url).includes("/user/stat/file")) json = { status: 0, data_stat: detail.__stat };',
+      '  else if (String(url).includes("/user/stat/transcription/quota")) json = detail.__quota;',
       '  else if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
       '  else if (String(url).includes("/ai/update_note_info") || String(url).includes("/ai/del_note_info")) json = { status: 0 };',
       '  return { ok: true, status: 200, statusText: "OK", json: async () => json };',
@@ -564,6 +566,45 @@ test("files tags create, rename and delete send the expected bodies and guard de
     const del = yes.requests.find((x) => x.method === "DELETE");
     assert.match(del!.url, /\/filetag\/t3$/);
     assert.equal(JSON.parse(yes.stdout).data.deleted.name, "Board");
+  });
+});
+
+test("account stats and quota normalize the API and never POST", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = {
+      ...syntheticRecording(),
+      __stat: {
+        total_files: 3, total_days: 2, total_duration: 7_200_000, total_transcribed_duration: 3_600_000,
+        recent_30_days_daily_avg: 1800, previous_30_days_daily_avg: 900, most_active_hour: 21, max_files: 2, max_duration: 5_000_000,
+        group_result: [{ day: "2026-11-01", count: 2, duration: 5_000_000 }, { day: "2026-11-02", count: 1, duration: 2_200_000 }],
+      },
+      __quota: { is_starter: true, can_notify: true, quota: { files: 5 } },
+    };
+    const stats = await runWithFakePlaud(tmp, detail, ["--json"], {}, ["account", "stats"]);
+    assert.equal(stats.exitCode, 0, stats.stderr);
+    const d = JSON.parse(stats.stdout).data;
+    assert.equal(d.totalFiles, 3);
+    assert.equal(d.recent30DaysDailyAvgMs, 1_800_000, "seconds per day become milliseconds");
+    assert.equal(d.daily, undefined, "per-day rows only with --daily");
+    const daily = await runWithFakePlaud(tmp, detail, ["--json", "--daily"], {}, ["account", "stats"]);
+    assert.deepEqual(JSON.parse(daily.stdout).data.daily[0], { day: "2026-11-01", files: 2, durationMs: 5_000_000 });
+    const plain = await runWithFakePlaud(tmp, detail, [], {}, ["account", "stats"]);
+    assert.match(plain.stdout, /3 files over 2 active days, 2\.0 h recorded/);
+
+    const quota = await runWithFakePlaud(tmp, detail, ["--json"], {}, ["account", "quota"]);
+    assert.deepEqual(JSON.parse(quota.stdout).data, { isStarter: true, canNotify: true, quota: { files: 5 } });
+    assert.match(quota.requests[0].url, /quota\?notification=tag$/);
+    assert.equal(quota.requests.filter((x) => x.method !== "GET").length, 0);
+
+    const paid = await runWithFakePlaud(tmp, { ...detail, __quota: { is_starter: false } }, ["--json"], {}, ["account", "quota"]);
+    assert.deepEqual(JSON.parse(paid.stdout).data, { isStarter: false, canNotify: null, quota: null });
+
+    const bad = await runWithFakePlaud(tmp, { ...detail, __stat: undefined }, ["--json"], {}, ["account", "stats"]);
+    assert.equal(bad.exitCode, 1);
+    assert.equal(JSON.parse(bad.stdout).ok, false);
+    const badQuota = await runWithFakePlaud(tmp, { ...detail, __quota: { status: -1, msg: "Invalid notification type" } }, ["--json"], {}, ["account", "quota"]);
+    assert.equal(badQuota.exitCode, 1);
+    assert.match(JSON.parse(badQuota.stdout).error.message, /Invalid notification/);
   });
 });
 
