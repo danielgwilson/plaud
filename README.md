@@ -194,6 +194,23 @@ plaud files delete <id> --yes     # permanent, only for files already in the tra
 
 `files delete` is the web app's "Delete permanently" and **cannot be undone**: the recording, audio and transcript are gone. Plaud's server itself does **not** check the trash: a raw delete removes an active recording too (checked on a test clip), so this CLI is the safeguard. It refuses unless every id is already in the trash (one active or unknown id blocks the whole batch and nothing is deleted), it needs `--yes`, and it reads the files back afterwards (`deletedIds`, `stillPresentIds`). Files still present after the call return `DELETE_INCOMPLETE` (exit 1); an outcome it cannot confirm returns `CONFIRM_UNCERTAIN`.
 
+## Share a recording
+
+Sharing sends content to other people, so nothing is shared by default: you pick the mode, the content, and confirm with `--yes`.
+
+```bash
+plaud files share get <id>                                    # what is shared now (read-only)
+plaud files share create <id> --to ann@example.com --content transcript,summary --yes
+plaud files share create <id> --public --content transcript --expire 2026-12-31 --yes
+plaud files share revoke <id>                                 # remove the public link
+plaud files share remove <id> <recipientId>                   # stop sharing with one person
+```
+
+- **Private** (`--to <email>`, the default mode): Plaud **emails each recipient** a link that only they can open.
+- **Public** (`--public`, must be explicit): anyone with the URL can open the content, until `--expire` (a date or an RFC3339 time; a bare date means the end of that day in UTC). If the expiry cannot be set, the link is removed again instead of being left open.
+- `--content` takes `audio`, `transcript`, `summary`, `overview` (comma-separated), and `--note <noteId>` adds specific notes. Highlights are not supported. Recordings in the trash cannot be shared.
+- Without `--yes` the command only prints what it would do. `--json` returns the public `url`.
+
 ## Speaker labels
 
 ```bash

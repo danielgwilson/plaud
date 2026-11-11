@@ -1444,6 +1444,120 @@ notesCmd
     });
   });
 
+// ---- Sharing ----
+
+async function runShare(fn: () => Promise<unknown>): Promise<void> {
+  const { ShareInputError } = await import("./share.js");
+  try {
+    printJson(ok(await fn()));
+  } catch (err: any) {
+    if (err instanceof ShareInputError) {
+      process.exitCode = 2;
+      printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+      return;
+    }
+    process.exitCode = 1;
+    printJson(fail(makeError(err)));
+  }
+}
+
+const shareCmd = filesCmd.command("share").description("Share a recording (private by default; public needs --public)");
+
+shareCmd
+  .command("get")
+  .description("Show a recording's public link and private recipients (read-only)")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action(async (id: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShare(async () => {
+      const { getPublicShare, getPrivateShare } = await import("./plaud-api.js");
+      const { summarizePublic, summarizePrivate } = await import("./share.js");
+      const [pub, priv] = await Promise.all([getPublicShare({ token, fileId: id }), getPrivateShare({ token, fileId: id })]);
+      return { id, public: summarizePublic(pub), private: summarizePrivate(priv) };
+    });
+  });
+
+shareCmd
+  .command("create")
+  .description("Share a recording: --to <email> (private; Plaud emails a link) or --public (anyone with the link)")
+  .argument("<id>", "Recording id")
+  .option("--to <email...>", "Private share: recipient email(s). Plaud sends each an email")
+  .option("--public", "Public share: anyone with the link can open it", false)
+  .option("--content <list>", "What to share, comma-separated: audio, transcript, summary, overview (required)")
+  .option("--note <noteId...>", "Also share these notes (ids from `files notes list`)")
+  .option("--expire <when>", "Public share only: expiry, like 2026-12-31 or 2026-12-31T17:00:00Z")
+  .option("--yes", "Confirm that this publishes the content or sends the emails", false)
+  .option("--json", "Print JSON")
+  .action(async (id: string, opts: { to?: string[]; public?: boolean; content?: string; note?: string[]; expire?: string; yes?: boolean }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShare(async () => {
+      const share = await import("./share.js");
+      const api = await import("./plaud-api.js");
+      const mode = share.chooseMode({ to: opts.to ?? [], isPublic: !!opts.public, yes: !!opts.yes });
+      if (opts.expire !== undefined && mode.mode !== "public") throw new share.ShareInputError("--expire only applies to --public shares.");
+      const expireAt = opts.expire !== undefined ? share.parseExpiry(opts.expire) : null;
+      const details = await readRecording(token, id);
+      if (details.is_trash === true) throw new share.ShareInputError("This recording is in the trash. Restore it first.");
+      const notes = await api.listNotes({ token, fileId: id });
+      const config = share.buildContentConfig({ content: opts.content ? [opts.content] : [], noteIds: opts.note ?? [], notes });
+      if (!opts.yes) throw new share.ShareInputError(`${share.describeConsequence(mode, config)} Re-run with --yes to confirm.`);
+
+      if (mode.mode === "private") {
+        const data = await api.createPrivateShare({ token, body: share.buildPrivateCreateBody(id, config, mode.recipients) });
+        return { id, mode: "private", recipients: mode.recipients, content: config, share: share.summarizePrivate(data) ?? data };
+      }
+      const data = await api.createPublicShare({ token, body: share.buildPublicCreateBody(id, config) });
+      let current = data;
+      if (expireAt) {
+        try {
+          current = (await api.setPublicShareExpiry({ token, fileId: id, expireAt })) ?? data;
+        } catch (err: any) {
+          // Fail closed: do not leave a link without the expiry that was asked for.
+          await api.deletePublicShare({ token, fileId: id }).catch(() => {});
+          throw new Error(`Could not set the expiry (${err?.message || err}); the public link was removed.`);
+        }
+      }
+      const pub = share.summarizePublic(current) ?? share.summarizePublic(data);
+      if (!pub) throw new Error("Plaud did not return a public link.");
+      return { id, mode: "public", url: pub.url, expireAt: pub.expireAt, content: config, note: "Anyone with this URL can open the shared content. Remove it with `plaud files share revoke <id>`." };
+    });
+  });
+
+shareCmd
+  .command("revoke")
+  .description("Remove a recording's public link")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action(async (id: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShare(async () => {
+      const { deletePublicShare, getPublicShare } = await import("./plaud-api.js");
+      await deletePublicShare({ token, fileId: id });
+      const stillShared = (await getPublicShare({ token, fileId: id })) !== null;
+      return { id, action: "files.share.revoke", revoked: !stillShared, stillShared };
+    });
+  });
+
+shareCmd
+  .command("remove")
+  .description("Stop sharing privately with one recipient (ids from `files share get`)")
+  .argument("<id>", "Recording id")
+  .argument("<recipientId>", "Recipient id")
+  .option("--json", "Print JSON")
+  .action(async (id: string, recipientId: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShare(async () => {
+      const { removePrivateRecipient } = await import("./plaud-api.js");
+      await removePrivateRecipient({ token, fileId: id, recipientId });
+      return { id, recipientId, action: "files.share.remove" };
+    });
+  });
+
 const recordingTagsCmd = filesCmd.command("tags").description("Manage tags on files");
 
 recordingTagsCmd
