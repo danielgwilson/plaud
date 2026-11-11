@@ -194,6 +194,24 @@ plaud files delete <id> --yes     # permanent, only for files already in the tra
 
 `files delete` is the web app's "Delete permanently" and **cannot be undone**: the recording, audio and transcript are gone. Plaud's server itself does **not** check the trash: a raw delete removes an active recording too (checked on a test clip), so this CLI is the safeguard. It refuses unless every id is already in the trash (one active or unknown id blocks the whole batch and nothing is deleted), it needs `--yes`, and it reads the files back afterwards (`deletedIds`, `stillPresentIds`). Files still present after the call return `DELETE_INCOMPLETE` (exit 1); an outcome it cannot confirm returns `CONFIRM_UNCERTAIN`.
 
+## Share a recording
+
+Sharing sends content to other people, so nothing is shared by default: you pick the mode, the content, and confirm with `--yes`.
+
+```bash
+plaud files share get <id>                                    # what is shared now (read-only)
+plaud files share create <id> --to ann@example.com --content transcript,summary --yes
+plaud files share create <id> --public --content transcript --expire 2026-12-31 --yes
+plaud files share revoke <id>                                 # remove the public link
+plaud files share remove <id> <recipientId>                   # stop sharing with one person
+```
+
+- **Private** (`--to <email>`; repeat or comma-separate): Plaud **emails each recipient** a link that only they can open. You must pick a mode: with neither `--to` nor `--public` the command refuses.
+- **Public** (`--public`, must be explicit): anyone with the URL can open the content, until `--expire` (`2026-12-31` means the end of that day in UTC; a date-time needs `Z` or an offset). The CLI reads the link back to check the expiry took; if it did not, or a create fails midway, it removes the link again and reports `CONFIRM_UNCERTAIN` with `stillShared` in `meta` when it could not confirm. A recording that already has a public link is refused; revoke it first.
+- The public URL is a secret: treat `share create --public` and `share get` output like a password and do not paste it into tickets or chat unless that is the point.
+- `--content` takes `audio`, `transcript`, `summary`, `overview` (comma-separated), and `--note <noteId>` adds specific notes. Highlights are not supported. Recordings in the trash cannot be shared.
+- Without `--yes` the command only prints what it would do, including how long the link stays open. A share request is sent once and never retried; if a reply is lost you get `CONFIRM_UNCERTAIN` (not retryable): check `share get` before trying again. `--json` returns the public `url`.
+
 ## Speaker labels
 
 ```bash

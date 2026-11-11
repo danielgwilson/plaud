@@ -200,6 +200,18 @@ async function runWithFakePlaud(
       '  else if (String(url).includes("/file/list") && detail.__lookupStatus) json = { status: detail.__lookupStatus, msg: "lookup failed" };',
       '  else if (String(url).includes("/file/list") && detail.__details) json = { status: 0, data_file_list: detail.__details.filter((d) => (body || []).includes(d.id) && !(detail.__deleteWorks && hasDeleted)) };',
       '  else if (method === "DELETE" && String(url).endsWith("/file/")) json = { status: 0 };',
+      '  else if (String(url).includes("/share/")) {',
+      '    const log = fs.readFileSync(process.env.FAKE_PLAUD_LOG, "utf8");',
+      '    const created = log.includes("/share/public/create"), deleted = log.includes("/share/public/delete");',
+      '    const u = String(url);',
+      '    if (u.endsWith("/share/public/create")) json = { status: 0, data: { share_url: "https://web.plaud.ai/s/pub_x::tok", share_key: "pub_x", expire_at: null, content_config: body.content_config } };',
+      '    else if (u.endsWith("/share/public/update")) json = detail.__failExpire ? { status: 40004, msg: "bad expiry" } : { status: 0, data: { share_url: "https://web.plaud.ai/s/pub_x::tok", share_key: "pub_x", expire_at: body.expire_at } };',
+      '    else if (u.endsWith("/share/public/delete")) json = { status: 0 };',
+      '    else if (u.endsWith("/share/public/get")) { const upd = log.split("\\n").filter((l) => l.includes("/share/public/update") && l.includes("expire_at")).map((l) => JSON.parse(l).body.expire_at).pop() || null; const linkExists = (detail.__linkExists || created) && (detail.__deleteIgnored || !deleted); json = linkExists ? { status: 0, data: { share_url: "https://web.plaud.ai/s/pub_x::tok", share_key: "pub_x", expire_at: detail.__ignoreExpiry ? null : upd, content_config: {} } } : { status: 40400, msg: "Public share not found" }; }',
+      '    else if (u.endsWith("/share/private/create")) json = { status: 0, data: { recipients: body.recipients.map((r, i) => ({ recipient_id: "r" + i, contact: r.contact, status: "invited" })) } };',
+      '    else if (u.endsWith("/share/private/get")) json = { status: 40400, msg: "Private share not found" };',
+      '    else json = { status: 0 };',
+      '  }',
       '  else if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
       '  else if (String(url).includes("/ai/update_note_info") || String(url).includes("/ai/del_note_info")) json = { status: 0 };',
       '  return { ok: true, status: 200, statusText: "OK", json: async () => json };',
@@ -664,6 +676,143 @@ test("files delete only removes files already in the trash, after --yes, in one 
     const badLookup = await run(["t1", "--yes"], { ...base, __lookupStatus: -1 });
     assert.equal(badLookup.exitCode, 1);
     assert.equal(deletes(badLookup).length, 0, "an error reply from the lookup never reads as 'no such file'");
+  });
+});
+
+test("files share: you must pick a mode and content, and nothing is sent without --yes", async () => {
+  await withTempDir(async (tmp) => {
+    const notes = [{ data_id: "sum-1", data_type: "auto_sum_note", data_title: "Summary", data_content: "s" }, { data_id: "n2", data_type: "mark_note" }];
+    const detail = { ...syntheticRecording(), __notes: notes };
+    const run = (sub: string, args: string[], d: any = detail) => runWithFakePlaud(tmp, d, args, {}, ["files", "share", sub]);
+    const shareWrites = (r: { requests: Array<{ method: string; url: string }> }) =>
+      r.requests.filter((x) => x.method === "POST" && /\/share\/(public|private)\/(create|update|delete|remove)/.test(x.url));
+
+    for (const [args, pattern] of [
+      [["rec-1", "--content", "transcript", "--yes"], /--to <email>.*--public/],
+      [["rec-1", "--public", "--to", "a@b.co", "--content", "transcript", "--yes"], /not both/],
+      [["rec-1", "--public", "--yes"], /Nothing is shared by default/],
+      [["rec-1", "--public", "--content", "transcript"], /PUBLIC link.*no expiry.*--yes/],
+      [["rec-1", "--public", "--content", "transcript", "--expire", "2099-12-31"], /until 2099-12-31T23:59:59Z.*--yes/],
+      [["rec-1", "--to", "Ann@Example.com", "--content", "transcript"], /EMAIL ann@example.com.*--yes/],
+      [["rec-1", "--to", "not-an-email", "--content", "transcript", "--yes"], /not an email/],
+      [["rec-1", "--to", "ann@exаmple.com", "--content", "transcript", "--yes"], /not an email/],
+      [["rec-1", "--to", "a@b.co", "--content", "transcript", "--expire", "2099-01-01", "--yes"], /only applies to --public/],
+      [["rec-1", "--public", "--content", "transcript", "--expire", "2001-01-01", "--yes"], /in the past/],
+      [["rec-1", "--public", "--content", "transcript", "--expire", "2099-12-31T17:00", "--yes"], /not accepted/],
+      [["rec-1", "--public", "--content", "transcript", "--note", "ghost", "--yes"], /No note "ghost"/],
+      [["rec-1", "--public", "--content", "transcript", "--yes"], /already has a public link/],
+    ] as Array<[string[], RegExp]>) {
+      const existing = /already has a public link/.test(String(pattern));
+      const r = await run("create", args, existing ? { ...detail, __linkExists: true } : detail);
+      assert.equal(r.exitCode, 2, args.join(" "));
+      assert.match(JSON.parse(r.stdout).error.message, pattern);
+      assert.equal(shareWrites(r).length, 0, `nothing sent for: ${args.join(" ")}`);
+    }
+
+    const trashed = await run("create", ["rec-1", "--public", "--content", "transcript", "--yes"], { ...detail, is_trash: true });
+    assert.equal(trashed.exitCode, 2);
+    assert.equal(shareWrites(trashed).length, 0);
+
+    // A second --content adds to the first instead of replacing it.
+    const both = await run("create", ["rec-1", "--public", "--content", "audio", "--content", "transcript", "--yes"]);
+    assert.deepEqual(both.requests.find((x) => x.url.endsWith("/share/public/create"))!.body.content_config, { audio: true, transcript: true, highlights: 0, overview: false, notes: [] });
+  });
+});
+
+test("files share create public: sends the right bodies, verifies the expiry, and fails closed", async () => {
+  await withTempDir(async (tmp) => {
+    const notes = [{ data_id: "sum-1", data_type: "auto_sum_note", data_title: "Summary", data_content: "s" }];
+    const detail = { ...syntheticRecording(), __notes: notes };
+    const run = (sub: string, args: string[], d: any = detail) => runWithFakePlaud(tmp, d, args, {}, ["files", "share", sub]);
+    const deletes = (r: { requests: Array<{ url: string }> }) => r.requests.filter((x) => x.url.endsWith("/share/public/delete")).length;
+
+    const pub = await run("create", ["rec-1", "--public", "--content", "transcript,summary", "--expire", "2099-12-31", "--yes"]);
+    assert.equal(pub.exitCode, 0, pub.stderr);
+    const create = pub.requests.find((x) => x.url.endsWith("/share/public/create"))!;
+    assert.deepEqual(create.body, { object_id: "rec-1", object_type: "file", content_config: { audio: false, transcript: true, highlights: 0, overview: false, notes: ["sum-1"] } });
+    assert.equal(pub.requests.find((x) => x.url.endsWith("/share/public/update"))!.body.expire_at, "2099-12-31T23:59:59Z");
+    const out = JSON.parse(pub.stdout).data;
+    assert.equal(out.url, "https://web.plaud.ai/s/pub_x::tok");
+    assert.equal(out.expireAt, "2099-12-31T23:59:59Z");
+    assert.equal(deletes(pub), 0);
+
+    const rejected = await run("create", ["rec-1", "--public", "--content", "transcript", "--expire", "2099-12-31", "--yes"], { ...detail, __failExpire: true });
+    assert.equal(rejected.exitCode, 1);
+    assert.equal(deletes(rejected), 1, "a link that could not get its expiry is removed");
+    const rej = JSON.parse(rejected.stdout);
+    assert.equal(rej.error.code, "CONFIRM_UNCERTAIN");
+    assert.equal(rej.error.retryable, false);
+    assert.match(rej.error.message, /link was removed/);
+
+    const ignored = await run("create", ["rec-1", "--public", "--content", "transcript", "--expire", "2099-12-31", "--yes"], { ...detail, __ignoreExpiry: true });
+    assert.equal(ignored.exitCode, 1, "an expiry the server did not keep is not success");
+    assert.equal(deletes(ignored), 1);
+    assert.match(JSON.parse(ignored.stdout).error.message, /kept expiry none instead of 2099-12-31T23:59:59Z/);
+
+    const stuck = await run("create", ["rec-1", "--public", "--content", "transcript", "--expire", "2099-12-31", "--yes"], { ...detail, __failExpire: true, __deleteIgnored: true });
+    assert.equal(stuck.exitCode, 1);
+    const stuckErr = JSON.parse(stuck.stdout);
+    assert.match(stuckErr.error.message, /could not be confirmed removed: run `plaud files share revoke rec-1` now/);
+    assert.equal(stuckErr.meta.stillShared, true);
+
+    const timeout = await run("create", ["rec-1", "--public", "--content", "transcript", "--yes"], { ...detail, __fail: "POST /share/public/create" });
+    assert.equal(timeout.exitCode, 1);
+    assert.equal(timeout.requests.filter((x) => x.url.endsWith("/share/public/create")).length, 1, "create is never retried");
+    const t = JSON.parse(timeout.stdout);
+    assert.equal(t.error.code, "CONFIRM_UNCERTAIN");
+    assert.equal(t.error.retryable, false);
+  });
+});
+
+test("files share create private: emails once, never retried, uncertainty is not retryable", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording(), __notes: [] };
+    const run = (sub: string, args: string[], d: any = detail) => runWithFakePlaud(tmp, d, args, {}, ["files", "share", sub]);
+    const priv = await run("create", ["rec-1", "--to", "ann@example.com", "--to", "bob@example.com,ann@example.com", "--content", "audio", "--yes"]);
+    assert.equal(priv.exitCode, 0, priv.stderr);
+    const creates = priv.requests.filter((x) => x.url.endsWith("/share/private/create"));
+    assert.equal(creates.length, 1, "emails are sent once");
+    assert.deepEqual(creates[0].body, {
+      object_id: "rec-1",
+      object_type: "file",
+      content_config: { audio: true, transcript: false, highlights: 0, overview: false, notes: [] },
+      recipients: [{ contact_type: "email", contact: "ann@example.com" }, { contact_type: "email", contact: "bob@example.com" }],
+    });
+
+    const failed = await run("create", ["rec-1", "--to", "ann@example.com", "--content", "audio", "--yes"], { ...detail, __fail: "POST /share/private/create" });
+    assert.equal(failed.exitCode, 1);
+    assert.equal(failed.requests.filter((x) => x.url.endsWith("/share/private/create")).length, 1, "a failed send is not repeated");
+    const f = JSON.parse(failed.stdout);
+    assert.equal(f.error.code, "CONFIRM_UNCERTAIN");
+    assert.equal(f.error.retryable, false);
+    assert.match(f.error.message, /emails may already have been sent/);
+  });
+});
+
+test("files share get is read-only; revoke and remove confirm by reading back", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording() };
+    const run = (sub: string, args: string[], d: any = detail) => runWithFakePlaud(tmp, d, args, {}, ["files", "share", sub]);
+
+    const none = await run("get", ["rec-1"]);
+    assert.deepEqual(JSON.parse(none.stdout).data, { id: "rec-1", public: null, private: null });
+    const withLink = await run("get", ["rec-1"], { ...detail, __linkExists: true });
+    assert.equal(JSON.parse(withLink.stdout).data.public.url, "https://web.plaud.ai/s/pub_x::tok");
+    assert.equal(withLink.requests.filter((x) => x.method === "POST" && /create|update|delete|remove/.test(x.url)).length, 0, "get is read-only");
+
+    const revoked = await run("revoke", ["rec-1"], { ...detail, __linkExists: true });
+    assert.equal(revoked.exitCode, 0, revoked.stderr);
+    assert.equal(revoked.requests.filter((x) => x.url.endsWith("/share/public/delete")).length, 1, "revoke actually sends the delete");
+    assert.deepEqual(JSON.parse(revoked.stdout).data, { id: "rec-1", action: "files.share.revoke", revoked: true, stillShared: false });
+
+    const stillOpen = await run("revoke", ["rec-1"], { ...detail, __linkExists: true, __deleteIgnored: true });
+    assert.equal(stillOpen.exitCode, 1);
+    const open = JSON.parse(stillOpen.stdout);
+    assert.equal(open.error.code, "CONFIRM_UNCERTAIN");
+    assert.equal(open.meta.stillShared, true);
+
+    const removed = await run("remove", ["rec-1", "r0"]);
+    assert.deepEqual(removed.requests.find((x) => x.url.endsWith("/share/private/remove-recipient"))!.body, { object_id: "rec-1", object_type: "file", recipient_id: "r0" });
   });
 });
 

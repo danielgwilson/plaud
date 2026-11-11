@@ -462,3 +462,40 @@ export async function deleteFilesPermanently({ token, ids }: { token: string; id
   assertApiOk(res);
   return res;
 }
+
+// ---- Sharing (see src/share.ts) ----
+
+const SHARE_NOT_FOUND = 40400;
+
+async function shareCall(token: string, endpoint: string, body: unknown): Promise<any> {
+  // Never retried: a retried create could email twice or mint a second link.
+  const res = await plaudRequest({ token, endpoint, method: "POST", body, retries: 0 });
+  if (res && typeof res.status === "number" && res.status !== 0) {
+    const err = new Error(res.msg || "Share request failed") as PlaudApiError;
+    err.status = res.status === SHARE_NOT_FOUND ? 404 : 400;
+    err.data = res;
+    throw err;
+  }
+  return res?.data ?? null;
+}
+
+/** Returns null when the file has no such share (Plaud answers status 40400). */
+async function shareGet(token: string, endpoint: string, fileId: string): Promise<any | null> {
+  try {
+    return await shareCall(token, endpoint, { object_id: fileId, object_type: "file" });
+  } catch (err: any) {
+    if (err?.data?.status === SHARE_NOT_FOUND) return null;
+    throw err;
+  }
+}
+
+export const getPublicShare = ({ token, fileId }: { token: string; fileId: string }) => shareGet(token, "/share/public/get", fileId);
+export const getPrivateShare = ({ token, fileId }: { token: string; fileId: string }) => shareGet(token, "/share/private/get", fileId);
+export const createPublicShare = ({ token, body }: { token: string; body: unknown }) => shareCall(token, "/share/public/create", body);
+export const createPrivateShare = ({ token, body }: { token: string; body: unknown }) => shareCall(token, "/share/private/create", body);
+export const setPublicShareExpiry = ({ token, fileId, expireAt }: { token: string; fileId: string; expireAt: string }) =>
+  shareCall(token, "/share/public/update", { object_id: fileId, object_type: "file", expire_at: expireAt });
+export const deletePublicShare = ({ token, fileId }: { token: string; fileId: string }) =>
+  shareCall(token, "/share/public/delete", { object_id: fileId, object_type: "file" });
+export const removePrivateRecipient = ({ token, fileId, recipientId }: { token: string; fileId: string; recipientId: string }) =>
+  shareCall(token, "/share/private/remove-recipient", { object_id: fileId, object_type: "file", recipient_id: recipientId });

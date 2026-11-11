@@ -1444,6 +1444,159 @@ notesCmd
     });
   });
 
+// ---- Sharing ----
+
+async function runShare(fn: () => Promise<unknown>): Promise<void> {
+  const { ShareInputError } = await import("./share.js");
+  try {
+    printJson(ok(await fn()));
+  } catch (err: any) {
+    if (err instanceof ShareInputError) {
+      process.exitCode = 2;
+      printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+      return;
+    }
+    process.exitCode = 1;
+    printJson(fail(makeError(err)));
+  }
+}
+
+const shareCmd = filesCmd.command("share").description("Share a recording: --to <email> (private, Plaud emails a link) or --public. Nothing is shared by default");
+
+async function runShareSafe(fn: () => Promise<unknown>): Promise<void> {
+  const { ShareInputError, ShareUncertainError } = await import("./share.js");
+  try {
+    printJson(ok(await fn()));
+  } catch (err: any) {
+    if (err instanceof ShareInputError) {
+      process.exitCode = 2;
+      printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+      return;
+    }
+    process.exitCode = 1;
+    if (err instanceof ShareUncertainError) {
+      printJson(fail(makeError(null, { code: "CONFIRM_UNCERTAIN", message: err.message }), { stillShared: err.stillShared }));
+      return;
+    }
+    printJson(fail(makeError(err)));
+  }
+}
+
+shareCmd
+  .command("get")
+  .description("Show a recording's public link and private recipients (read-only). The public URL is a secret: anyone with it can open the shared content")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action(async (id: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShareSafe(async () => {
+      const { getPublicShare, getPrivateShare } = await import("./plaud-api.js");
+      const { summarizePublic, summarizePrivate } = await import("./share.js");
+      await readRecording(token, id);
+      const [pub, priv] = await Promise.all([getPublicShare({ token, fileId: id }), getPrivateShare({ token, fileId: id })]);
+      return { id, public: summarizePublic(pub), private: summarizePrivate(priv) };
+    });
+  });
+
+shareCmd
+  .command("create")
+  .description("Share a recording: --to <email> (private; Plaud emails a link) or --public (anyone with the link)")
+  .argument("<id>", "Recording id")
+  .option("--to <email>", "Private share: recipient email(s), repeat or comma-separate. Plaud sends each an email", (v: string, prev: string[] = []) => prev.concat(v), [] as string[])
+  .option("--public", "Public share: anyone with the link can open it", false)
+  .option("--content <list>", "What to share, comma-separated: audio, transcript, summary, overview (required unless --note)", (v: string, prev: string[] = []) => prev.concat(v), [] as string[])
+  .option("--note <noteId>", "Also share this note (id from `files notes list`); repeatable", (v: string, prev: string[] = []) => prev.concat(v), [] as string[])
+  .option("--expire <when>", "Public share only: expiry, like 2026-12-31 (end of day UTC) or 2026-12-31T17:00:00Z")
+  .option("--yes", "Confirm that this publishes the content or sends the emails", false)
+  .option("--json", "Print JSON")
+  .action(async (id: string, opts: { to: string[]; public?: boolean; content: string[]; note: string[]; expire?: string; yes?: boolean }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runShareSafe(async () => {
+      const share = await import("./share.js");
+      const api = await import("./plaud-api.js");
+      const mode = share.chooseMode({ to: opts.to, isPublic: !!opts.public });
+      if (opts.expire !== undefined && mode.mode !== "public") throw new share.ShareInputError("--expire only applies to --public shares.");
+      const expireAt = opts.expire !== undefined ? share.parseExpiry(opts.expire) : null;
+      const details = await readRecording(token, id);
+      if (details.is_trash === true) throw new share.ShareInputError("This recording is in the trash. Restore it first.");
+      const notes = await api.listNotes({ token, fileId: id });
+      const config = share.buildContentConfig({ content: opts.content, noteIds: opts.note, notes });
+      if (!opts.yes) throw new share.ShareInputError(`${share.describeConsequence(mode, config, expireAt)} Re-run with --yes to confirm.`);
+
+      const shareApi: import("./share.js").ShareApi = {
+        getPublic: () => api.getPublicShare({ token, fileId: id }),
+        createPublic: (body) => api.createPublicShare({ token, body }),
+        setExpiry: (at) => api.setPublicShareExpiry({ token, fileId: id, expireAt: at }),
+        deletePublic: () => api.deletePublicShare({ token, fileId: id }),
+        createPrivate: (body) => api.createPrivateShare({ token, body }),
+      };
+      return mode.mode === "private"
+        ? await share.createPrivateShareFlow(shareApi, id, config, mode.recipients)
+        : await share.createPublicShareFlow(shareApi, id, config, expireAt);
+    });
+  });
+
+shareCmd
+  .command("revoke")
+  .description("Remove a recording's public link")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action(async (id: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    const { ShareUncertainError } = await import("./share.js");
+    await runShareSafe(async () => {
+      const { deletePublicShare, getPublicShare } = await import("./plaud-api.js");
+      let sendError: any = null;
+      try {
+        await deletePublicShare({ token, fileId: id });
+      } catch (err: any) {
+        sendError = err;
+      }
+      let stillShared: boolean;
+      try {
+        stillShared = (await getPublicShare({ token, fileId: id })) !== null;
+      } catch {
+        throw new ShareUncertainError(`Could not confirm the public link is gone${sendError ? ` (${sendError.message})` : ""}. Run \`plaud files share get ${id}\`.`);
+      }
+      if (stillShared) throw new ShareUncertainError(`The public link is still open${sendError ? ` (${sendError.message})` : ""}. Try \`plaud files share revoke ${id}\` again.`, true);
+      return { id, action: "files.share.revoke", revoked: true, stillShared: false };
+    });
+  });
+
+shareCmd
+  .command("remove")
+  .description("Stop sharing privately with one recipient (ids from `files share get`)")
+  .argument("<id>", "Recording id")
+  .argument("<recipientId>", "Recipient id")
+  .option("--json", "Print JSON")
+  .action(async (id: string, recipientId: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    const { ShareUncertainError, summarizePrivate } = await import("./share.js");
+    await runShareSafe(async () => {
+      const { removePrivateRecipient, getPrivateShare } = await import("./plaud-api.js");
+      let sendError: any = null;
+      try {
+        await removePrivateRecipient({ token, fileId: id, recipientId });
+      } catch (err: any) {
+        sendError = err;
+      }
+      let still: boolean | null;
+      try {
+        const summary = summarizePrivate(await getPrivateShare({ token, fileId: id }));
+        still = summary && "recipients" in summary ? summary.recipients.some((r) => r.recipientId === recipientId) : null;
+      } catch {
+        still = null;
+      }
+      if (still === true) throw new ShareUncertainError(`Recipient ${recipientId} still has access${sendError ? ` (${sendError.message})` : ""}.`, true);
+      if (still === null && sendError) throw new ShareUncertainError(`Could not confirm the removal (${sendError.message}). Run \`plaud files share get ${id}\`.`);
+      return { id, recipientId, action: "files.share.remove", removed: still === false ? true : null };
+    });
+  });
+
 const recordingTagsCmd = filesCmd.command("tags").description("Manage tags on files");
 
 recordingTagsCmd

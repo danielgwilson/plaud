@@ -12,6 +12,7 @@ Note: `plaud recordings …` is supported as an alias for `plaud files …`.
   - `plaud files download`
   - `plaud files export`
   - `plaud files trash`
+  - `plaud files share create|get|revoke|remove`
   - `plaud files delete`
   - `plaud files restore`
   - `plaud files tags add`
@@ -271,6 +272,10 @@ Read-only. `stats` returns `{ totalFiles, totalDays, totalDurationMs, totalTrans
 ### `plaud files delete <id...> --yes`
 
 Permanent deletion of files already in the trash. Success: `{ action: "delete", requested, deletedIds, stillPresentIds, response }`; `stillPresentIds` is read back after the call; if it is not empty the result is a failure envelope (`DELETE_INCOMPLETE`, exit 1) carrying the same data in `meta`, and if the read-back itself fails the result is `CONFIRM_UNCERTAIN`. The server does not check the trash, so the CLI does. Without `--yes`, or when any id is not in the trash or not found, nothing is deleted and the result is `VALIDATION` (exit 2).
+
+### Share commands
+
+`files share create <id>` needs a mode (`--to <email>` private, which makes Plaud email the recipients, or `--public`), `--content` (and/or `--note`) and `--yes`; without `--yes` it exits 2 with `VALIDATION` and a sentence saying what would happen. Public success: `{ id, mode: "public", url, expireAt, content, note }`. Private success: `{ id, mode: "private", recipients, content, share }`. `files share get <id>` returns `{ id, public: { url, shareKey, expireAt, content, createdAt } | null, private: { recipients: [{ recipientId, contact, status }] } | null }`. `share revoke` returns `{ id, action, revoked: true, stillShared: false }`; `share remove` returns `{ id, recipientId, action, removed }`. Share requests are never retried. When a request may or may not have taken effect (a lost reply, an expiry that did not take, a link still open after revoke) the result is a failure envelope with `error.code` `CONFIRM_UNCERTAIN`, `retryable: false` and `meta.stillShared` (`true`, `false` or `null` for unknown). A recording that already has a public link returns `VALIDATION`. In `share get`, `private` is `{ unrecognized: true, keys }` if Plaud's answer has no recipients list.
 
 ### `plaud files download <id>`
 
