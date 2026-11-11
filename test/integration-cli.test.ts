@@ -197,6 +197,7 @@ async function runWithFakePlaud(
       '  else if (String(url).includes("/file/simple/web") && detail.__files) json = { status: 0, data_file_list: detail.__files };',
       '  else if (String(url).includes("/user/stat/file")) json = { status: 0, data_stat: detail.__stat };',
       '  else if (String(url).includes("/user/stat/transcription/quota")) json = detail.__quota;',
+      '  else if (String(url).includes("/file/list") && detail.__lookupStatus) json = { status: detail.__lookupStatus, msg: "lookup failed" };',
       '  else if (String(url).includes("/file/list") && detail.__details) json = { status: 0, data_file_list: detail.__details.filter((d) => (body || []).includes(d.id) && !(detail.__deleteWorks && hasDeleted)) };',
       '  else if (method === "DELETE" && String(url).endsWith("/file/")) json = { status: 0 };',
       '  else if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
@@ -646,7 +647,23 @@ test("files delete only removes files already in the trash, after --yes, in one 
     assert.deepEqual(out.stillPresentIds, []);
 
     const ignored = await run(["t1", "--yes"], { ...base, __deleteWorks: false });
-    assert.deepEqual(JSON.parse(ignored.stdout).data.stillPresentIds, ["t1"], "a delete that did not happen is reported");
+    assert.equal(ignored.exitCode, 1, "files still present after the delete is a failure, not exit 0");
+    const ignoredOut = JSON.parse(ignored.stdout);
+    assert.equal(ignoredOut.ok, false);
+    assert.equal(ignoredOut.error.code, "DELETE_INCOMPLETE");
+    assert.deepEqual(ignoredOut.meta.stillPresentIds, ["t1"]);
+
+    const oddId = await run(["t1 ", "--yes"]);
+    assert.equal(oddId.exitCode, 2);
+    assert.equal(deletes(oddId).length, 0);
+
+    const lostReply = await run(["t1", "--yes"], { ...base, __deleteWorks: true, __fail: "DELETE /file/" });
+    assert.equal(lostReply.exitCode, 0, "a failed reply for a delete that went through still settles as deleted");
+    assert.deepEqual(JSON.parse(lostReply.stdout).data.deletedIds, ["t1"]);
+
+    const badLookup = await run(["t1", "--yes"], { ...base, __lookupStatus: -1 });
+    assert.equal(badLookup.exitCode, 1);
+    assert.equal(deletes(badLookup).length, 0, "an error reply from the lookup never reads as 'no such file'");
   });
 });
 

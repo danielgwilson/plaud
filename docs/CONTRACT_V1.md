@@ -270,7 +270,7 @@ Read-only. `stats` returns `{ totalFiles, totalDays, totalDurationMs, totalTrans
 
 ### `plaud files delete <id...> --yes`
 
-Permanent deletion of files already in the trash. Success: `{ action: "delete", requested, deletedIds, stillPresentIds, response }`; `stillPresentIds` is read back after the call and should be empty. Without `--yes`, or when any id is not in the trash or not found, nothing is deleted and the result is `VALIDATION` (exit 2).
+Permanent deletion of files already in the trash. Success: `{ action: "delete", requested, deletedIds, stillPresentIds, response }`; `stillPresentIds` is read back after the call; if it is not empty the result is a failure envelope (`DELETE_INCOMPLETE`, exit 1) carrying the same data in `meta`, and if the read-back itself fails the result is `CONFIRM_UNCERTAIN`. The server does not check the trash, so the CLI does. Without `--yes`, or when any id is not in the trash or not found, nothing is deleted and the result is `VALIDATION` (exit 2).
 
 ### `plaud files download <id>`
 

@@ -192,7 +192,7 @@ plaud files trash <id>            # reversible: plaud files restore <id>
 plaud files delete <id> --yes     # permanent, only for files already in the trash
 ```
 
-`files delete` is the web app's "Delete permanently" and **cannot be undone**: the recording, audio and transcript are gone. It refuses unless every id is already in the trash (one active or unknown id blocks the whole batch and nothing is deleted), it needs `--yes`, and it checks afterwards by reading the files back (`deletedIds`, `stillPresentIds`).
+`files delete` is the web app's "Delete permanently" and **cannot be undone**: the recording, audio and transcript are gone. Plaud's server itself does **not** check the trash: a raw delete removes an active recording too (checked on a test clip), so this CLI is the safeguard. It refuses unless every id is already in the trash (one active or unknown id blocks the whole batch and nothing is deleted), it needs `--yes`, and it reads the files back afterwards (`deletedIds`, `stillPresentIds`). Files still present after the call return `DELETE_INCOMPLETE` (exit 1); an outcome it cannot confirm returns `CONFIRM_UNCERTAIN`.
 
 ## Speaker labels
 

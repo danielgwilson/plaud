@@ -1206,11 +1206,11 @@ filesCmd
   .action(async (ids: string[], opts: { yes?: boolean }) => {
     const token = await requireToken({ json: true });
     if (!token) return;
-    const { planPermanentDelete, describePlanRefusal, DeleteInputError } = await import("./delete.js");
-    const { getRecordingDetailsBatch, deleteFilesPermanently } = await import("./plaud-api.js");
+    const { planPermanentDelete, describePlanRefusal, cleanIds, DeleteInputError } = await import("./delete.js");
+    const { getRecordingDetailsStrict, deleteFilesPermanently } = await import("./plaud-api.js");
     try {
-      const wanted = ids.map(String);
-      const plan = planPermanentDelete(wanted, await getRecordingDetailsBatch({ token, ids: wanted }));
+      const wanted = cleanIds(ids.map(String));
+      const plan = planPermanentDelete(wanted, await getRecordingDetailsStrict({ token, ids: wanted }));
       const refusal = describePlanRefusal(plan);
       if (refusal) throw new DeleteInputError(refusal);
       if (!opts.yes) {
@@ -1218,11 +1218,32 @@ filesCmd
           `This permanently deletes ${plan.deletable.length} recording(s) from the trash and cannot be undone: ${plan.deletable.map((f) => `${f.id} ("${f.name}")`).join(", ")}. Re-run with --yes to confirm.`,
         );
       }
-      const res = await deleteFilesPermanently({ token, ids: plan.deletable.map((f) => f.id) });
-      // Check the outcome by reading the files back instead of trusting the reply.
-      const after = planPermanentDelete(plan.deletable.map((f) => f.id), await getRecordingDetailsBatch({ token, ids: plan.deletable.map((f) => f.id) }));
-      const stillThere = after.deletable.concat(after.notInTrash).map((f) => f.id);
-      printJson(ok({ action: "delete", requested: plan.deletable, deletedIds: plan.deletable.map((f) => f.id).filter((id) => !stillThere.includes(id)), stillPresentIds: stillThere, response: { status: res?.status ?? null } }));
+      const targets = plan.deletable.map((f) => f.id);
+      let response: unknown = null;
+      let sendError: any = null;
+      try {
+        response = await deleteFilesPermanently({ token, ids: targets });
+      } catch (err: any) {
+        sendError = err;
+      }
+      // Settle the outcome by reading the files back, whatever the reply said.
+      let stillPresent: string[];
+      try {
+        const after = planPermanentDelete(targets, await getRecordingDetailsStrict({ token, ids: targets }));
+        stillPresent = after.deletable.concat(after.notInTrash).map((f) => f.id);
+      } catch {
+        process.exitCode = 1;
+        printJson(fail(makeError(null, { code: "CONFIRM_UNCERTAIN", message: `Could not confirm the deletion${sendError ? ` (${sendError.message})` : ""}. Check with \`plaud files get <id>\` before retrying.` }), { requestedIds: targets }));
+        return;
+      }
+      const deletedIds = targets.filter((id) => !stillPresent.includes(id));
+      const data = { action: "delete", requested: plan.deletable, deletedIds, stillPresentIds: stillPresent, response: { status: (response as any)?.status ?? null } };
+      if (stillPresent.length > 0) {
+        process.exitCode = 1;
+        printJson(fail(makeError(sendError, { code: "DELETE_INCOMPLETE", message: `${stillPresent.length} recording(s) are still present after the delete: ${stillPresent.join(", ")}.${sendError ? ` (${sendError.message})` : ""}` }), data));
+        return;
+      }
+      printJson(ok(data));
     } catch (err: any) {
       if (err instanceof DeleteInputError) {
         process.exitCode = 2;
