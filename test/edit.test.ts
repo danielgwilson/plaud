@@ -4,6 +4,9 @@ import {
   buildNoteDeleteBody,
   buildNoteUpdateBody,
   buildRenameBody,
+  checkExpectVersion,
+  parseExpectVersion,
+  parseSegmentIndex,
   EditInputError,
   findNote,
   planSegmentEdit,
@@ -17,7 +20,6 @@ const segs = [
 
 test("rename body matches the web app's title edit", () => {
   assert.deepEqual(buildRenameBody("  New title "), { filename: "New title", extra_data: { actionData: { hasTitleEdit: true } } });
-  assert.equal(buildRenameBody("t", 5).file_version, 5);
   assert.throws(() => buildRenameBody("   "), EditInputError);
 });
 
@@ -42,6 +44,14 @@ test("transcript replace is literal, reports each changed segment, and keeps the
   assert.equal(planTranscriptReplace(segs, "nope", "x").changed, 0);
   assert.equal(planTranscriptReplace([{ content: "a.b" }, { content: "axb" }], "a.b", "Z").changed, 1, "no regex semantics");
   assert.throws(() => planTranscriptReplace(segs, "", "x"), EditInputError);
+  assert.equal(planTranscriptReplace(segs, "hello", "hello").changed, 0);
+  assert.throws(() => planTranscriptReplace([{ content: "whole" }], "whole", ""), /blank a whole segment/);
+  assert.deepEqual(parseSegmentIndex("3"), 3);
+  for (const bad of ["", "1e1", "0x1", "-1", "a"]) assert.throws(() => parseSegmentIndex(bad), EditInputError);
+  assert.equal(parseExpectVersion(undefined), undefined);
+  assert.throws(() => parseExpectVersion("x"), EditInputError);
+  assert.equal(checkExpectVersion({ version: 3 }, 3, "f"), 3);
+  assert.throws(() => checkExpectVersion({ version: 3 }, 4, "f"), /expected 4/);
 });
 
 test("note bodies carry id, type, title and content", () => {
@@ -54,9 +64,12 @@ test("note bodies carry id, type, title and content", () => {
     note_title: "Summary",
     note_content: "new",
   });
-  assert.equal(buildNoteUpdateBody("f1", note, { title: "T" }).note_content, "old");
-  assert.deepEqual(buildNoteDeleteBody(note), { note_id: "n1", note_type: "auto_sum_note", note_content: "old" });
+  const memo = { data_id: "n3", data_type: "mark_note", data_title: "Old", data_content: "kept" };
+  assert.equal(buildNoteUpdateBody("f1", memo, { title: "T" }).note_content, "kept");
   assert.throws(() => findNote(notes, "zzz"), /Available: n1/);
   assert.throws(() => buildNoteUpdateBody("f1", note, {}), /Nothing to change/);
   assert.throws(() => buildNoteUpdateBody("f1", note, { content: "  " }), /notes delete/);
+  assert.throws(() => buildNoteUpdateBody("f1", note, { title: "x" }), /title is fixed/);
+  assert.throws(() => buildNoteDeleteBody(note), /auto summary/);
+  assert.deepEqual(buildNoteDeleteBody({ data_id: "n2", data_type: "mark_note", data_content: "c" }), { note_id: "n2", note_type: "mark_note", note_content: "c" });
 });

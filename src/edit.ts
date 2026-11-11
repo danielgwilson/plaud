@@ -3,12 +3,23 @@
 
 export class EditInputError extends Error {}
 
-export function buildRenameBody(title: string, fileVersion?: number): Record<string, unknown> {
+/** Same body the web app sends. Plaud merges `extra_data` server-side (checked live), so only the title flag is sent. */
+export function buildRenameBody(title: string): Record<string, unknown> {
   const filename = String(title ?? "").trim();
   if (!filename) throw new EditInputError("The title is empty.");
-  const body: Record<string, unknown> = { filename, extra_data: { actionData: { hasTitleEdit: true } } };
-  if (fileVersion !== undefined) body.file_version = fileVersion;
-  return body;
+  return { filename, extra_data: { actionData: { hasTitleEdit: true } } };
+}
+
+export function parseSegmentIndex(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+$/.test(raw)) throw new EditInputError("--segment must be a non-negative integer (zero-based).");
+  return Number(raw);
+}
+
+export function parseExpectVersion(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(String(value))) throw new EditInputError("--expect-version must be a non-negative integer.");
+  return Number(value);
 }
 
 export type Segment = { content?: string; [k: string]: unknown };
@@ -31,11 +42,15 @@ export function planSegmentEdit(segments: Segment[], index: number, text: string
 export function planTranscriptReplace(segments: Segment[], find: string, replacement: string): TranscriptEditPlan {
   if (!Array.isArray(segments) || segments.length === 0) throw new EditInputError("This recording has no transcript segments.");
   if (!find) throw new EditInputError("--find is empty.");
+  if (!replacement.trim() && segments.some((s) => String(s.content ?? "").trim() === find.trim())) {
+    throw new EditInputError("That replacement would blank a whole segment. Use a non-empty --with.");
+  }
   const changes: TranscriptEditPlan["changes"] = [];
   const next = segments.map((s, i) => {
     const before = String(s.content ?? "");
     if (!before.includes(find)) return s;
     const after = before.split(find).join(replacement);
+    if (after === before) return s;
     changes.push({ index: i, before, after });
     return { ...s, content: after };
   });
@@ -53,8 +68,13 @@ export function findNote(notes: Note[], noteId: string): Note {
   return note;
 }
 
+export const SUMMARY_NOTE_TYPE = "auto_sum_note";
+
 export function buildNoteUpdateBody(fileId: string, note: Note, changes: { title?: string; content?: string }): Record<string, unknown> {
   if (changes.title === undefined && changes.content === undefined) throw new EditInputError("Nothing to change: pass --title and/or --content/--file.");
+  if (note.data_type === SUMMARY_NOTE_TYPE && changes.title !== undefined) {
+    throw new EditInputError("The summary's title is fixed by Plaud; only its text can change. Drop --title.");
+  }
   if (changes.content !== undefined && !changes.content.trim()) throw new EditInputError("The new note content is empty. Use `notes delete` to remove a note.");
   return {
     file_id: fileId,
@@ -66,5 +86,17 @@ export function buildNoteUpdateBody(fileId: string, note: Note, changes: { title
 }
 
 export function buildNoteDeleteBody(note: Note): Record<string, unknown> {
+  if (note.data_type === SUMMARY_NOTE_TYPE) {
+    throw new EditInputError("Plaud does not allow deleting the auto summary. Edit it with `notes set`, or regenerate it with `files rerun <id>`.");
+  }
   return { note_id: note.data_id, note_type: note.data_type, note_content: note.data_content ?? "" };
+}
+
+/** Returns the version read; throws a VALIDATION-style error when it differs from the expected one. */
+export function checkExpectVersion(details: { version?: unknown }, expected: number | undefined, id: string): number | null {
+  const versionRead = typeof details?.version === "number" ? details.version : null;
+  if (expected !== undefined && versionRead !== expected) {
+    throw new EditInputError(`Recording version is ${versionRead ?? "unknown"}, expected ${expected}. Re-read it with \`plaud files get ${id} --json\` and retry.`);
+  }
+  return versionRead;
 }

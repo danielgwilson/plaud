@@ -248,13 +248,13 @@ Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`,
 
 ### Edit commands
 
-`files rename <id> <title>`, `files transcript edit|replace <id>`, and `files notes list|set|delete <id>` always print a JSON envelope.
+`files rename <id> <title>`, `files transcript edit|replace <id>`, and `files notes list|set|delete <id>` print a JSON envelope (a missing required option is reported by the argument parser as plain text, exit 1).
 
 ```json
 { "ok": true, "data": { "id": "…", "action": "files.transcript.replace", "dryRun": false, "written": true, "changed": 1, "changes": [{ "index": 0, "before": "…", "after": "…" }] } }
 ```
 
-`files rename` returns `{ id, action, title, url, response }`; `files notes list` returns `{ id, count, notes }` where each note has `data_id`, `data_type`, `data_title`, `data_content`. Invalid input (empty title, missing segment or note) returns `error.code` `VALIDATION` with exit 2.
+`files rename` returns `{ id, action, title, url, response }`; `files notes list` returns `{ id, count, notes }` where each note has `data_id`, `data_type`, `data_title`, `data_content`. Invalid input (empty title, bad or missing segment or note, `--expect-version` or `--expect-text` mismatch, unreadable `--file`, changing the summary's title, deleting the auto summary) returns `error.code` `VALIDATION` with exit 2. Transcript commands return `versionRead`; `notes set` returns `before`, `notes delete` returns `deleted`.
 
 ### `plaud files download <id>`
 

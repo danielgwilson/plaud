@@ -1268,20 +1268,29 @@ transcriptCmd
   .command("edit")
   .description("Replace the text of one transcript segment (speaker and timing are kept)")
   .argument("<id>", "Recording id")
-  .requiredOption("--segment <n>", "Zero-based segment index (see `files get --json`, trans_result)", (v) => Number(v))
+  .requiredOption("--segment <n>", "Zero-based segment index (see `files get --json`, trans_result)")
   .requiredOption("--text <text>", "New text for the segment")
+  .option("--expect-text <text>", "Refuse unless the segment currently has exactly this text (guards against a shifted index)")
+  .option("--expect-version <n>", "Refuse unless the recording is at this version (see `versionRead`)")
   .option("--dry-run", "Show the change without writing it", false)
   .option("--json", "Print JSON")
-  .action(async (id: string, opts: { segment: number; text: string; dryRun?: boolean }) => {
+  .action(async (id: string, opts: { segment: string; text: string; expectText?: string; expectVersion?: string; dryRun?: boolean }) => {
     const token = await requireToken({ json: true });
     if (!token) return;
     await runEdit(async () => {
-      const { planSegmentEdit } = await import("./edit.js");
+      const { planSegmentEdit, parseSegmentIndex, parseExpectVersion, checkExpectVersion, EditInputError } = await import("./edit.js");
       const { patchFile } = await import("./plaud-api.js");
+      const segment = parseSegmentIndex(opts.segment);
+      const expectVersion = parseExpectVersion(opts.expectVersion);
       const details = await readRecording(token, id);
-      const plan = planSegmentEdit(details.trans_result, opts.segment, opts.text);
+      const versionRead = checkExpectVersion(details, expectVersion, id);
+      if (opts.expectText !== undefined) {
+        const current = String(details.trans_result?.[segment]?.content ?? "");
+        if (current !== opts.expectText) throw new EditInputError(`Segment ${segment} no longer has the expected text (it now reads "${current.slice(0, 80)}"). Re-read with \`plaud files get ${id} --json\`.`);
+      }
+      const plan = planSegmentEdit(details.trans_result, segment, opts.text);
       if (!opts.dryRun && plan.changed > 0) await patchFile({ token, fileId: id, body: { trans_result: plan.segments, support_mul_summ: true } });
-      return { id, action: "files.transcript.edit", dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
+      return { id, action: "files.transcript.edit", versionRead, dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
     });
   });
 
@@ -1291,18 +1300,21 @@ transcriptCmd
   .argument("<id>", "Recording id")
   .requiredOption("--find <text>", "Text to find (exact, case-sensitive)")
   .requiredOption("--with <text>", "Replacement text")
+  .option("--expect-version <n>", "Refuse unless the recording is at this version (see `versionRead`)")
   .option("--dry-run", "Show the changes without writing them", false)
   .option("--json", "Print JSON")
-  .action(async (id: string, opts: { find: string; with: string; dryRun?: boolean }) => {
+  .action(async (id: string, opts: { find: string; with: string; expectVersion?: string; dryRun?: boolean }) => {
     const token = await requireToken({ json: true });
     if (!token) return;
     await runEdit(async () => {
-      const { planTranscriptReplace } = await import("./edit.js");
+      const { planTranscriptReplace, parseExpectVersion, checkExpectVersion } = await import("./edit.js");
       const { patchFile } = await import("./plaud-api.js");
+      const expectVersion = parseExpectVersion(opts.expectVersion);
       const details = await readRecording(token, id);
+      const versionRead = checkExpectVersion(details, expectVersion, id);
       const plan = planTranscriptReplace(details.trans_result, opts.find, opts.with);
       if (!opts.dryRun && plan.changed > 0) await patchFile({ token, fileId: id, body: { trans_result: plan.segments, support_mul_summ: true } });
-      return { id, action: "files.transcript.replace", dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
+      return { id, action: "files.transcript.replace", versionRead, dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
     });
   });
 
@@ -1331,18 +1343,28 @@ notesCmd
   .option("--title <title>", "New note title")
   .option("--content <text>", "New note text (markdown)")
   .option("--file <path>", "Read the new note text from a file")
+  .option("--dry-run", "Show before and after without writing", false)
   .option("--json", "Print JSON")
-  .action(async (id: string, noteId: string, opts: { title?: string; content?: string; file?: string }) => {
+  .action(async (id: string, noteId: string, opts: { title?: string; content?: string; file?: string; dryRun?: boolean }) => {
     const token = await requireToken({ json: true });
     if (!token) return;
     await runEdit(async () => {
       const { buildNoteUpdateBody, findNote, EditInputError } = await import("./edit.js");
       const { listNotes, updateNote } = await import("./plaud-api.js");
       if (opts.content !== undefined && opts.file !== undefined) throw new EditInputError("Pass --content or --file, not both.");
-      const content = opts.file !== undefined ? await fs.readFile(path.resolve(opts.file), "utf8") : opts.content;
+      let content = opts.content;
+      if (opts.file !== undefined) {
+        try {
+          content = await fs.readFile(path.resolve(opts.file), "utf8");
+        } catch {
+          throw new EditInputError(`Cannot read --file ${opts.file}.`);
+        }
+      }
       const note = findNote(await listNotes({ token, fileId: id }), noteId);
-      const res = await updateNote({ token, body: buildNoteUpdateBody(id, note, { title: opts.title, content }) });
-      return { id, noteId, action: "files.notes.set", response: { status: res?.status ?? null } };
+      const body = buildNoteUpdateBody(id, note, { title: opts.title, content });
+      if (opts.dryRun) return { id, noteId, action: "files.notes.set", dryRun: true, written: false, before: { title: note.data_title ?? "", content: note.data_content ?? "" }, after: { title: body.note_title, content: body.note_content } };
+      const res = await updateNote({ token, body });
+      return { id, noteId, action: "files.notes.set", dryRun: false, written: true, before: { title: note.data_title ?? "", content: note.data_content ?? "" }, response: { status: res?.status ?? null } };
     });
   });
 
@@ -1360,7 +1382,7 @@ notesCmd
       const { listNotes, deleteNote } = await import("./plaud-api.js");
       const note = findNote(await listNotes({ token, fileId: id }), noteId);
       const res = await deleteNote({ token, body: buildNoteDeleteBody(note) });
-      return { id, noteId, action: "files.notes.delete", response: { status: res?.status ?? null } };
+      return { id, noteId, action: "files.notes.delete", deleted: { type: note.data_type, title: note.data_title ?? "", content: note.data_content ?? "" }, response: { status: res?.status ?? null } };
     });
   });
 
