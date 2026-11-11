@@ -384,6 +384,24 @@ test("files get and files list carry the web app link", async () => {
   });
 });
 
+test("files upload --json returns v1 envelope on missing auth (exit 2)", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "upload", "nope.mp3", "--json"], { XDG_CONFIG_HOME: tmp, PLAUD_AUTH_TOKEN: "" });
+    assert.equal(r.exitCode, 2);
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.code, "AUTH_MISSING");
+  });
+});
+
+test("files upload --json reports a missing file before any network call", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runCli(["files", "upload", path.join(tmp, "nope.mp3"), "--json"], { XDG_CONFIG_HOME: tmp, PLAUD_AUTH_TOKEN: "x" });
+    assert.equal(r.exitCode, 1);
+    assert.equal(JSON.parse(r.stdout).error.code, "FILE_NOT_FOUND");
+  });
+});
+
 test("store status --json works without auth", async () => {
   await withTempDir(async (tmp) => {
     const r = await runCli(["store", "status", "--json"], {

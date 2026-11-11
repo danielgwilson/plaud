@@ -1476,6 +1476,61 @@ filesCmd
   });
 
 filesCmd
+  .command("upload")
+  .description("Upload a local audio file to Plaud (like the web app's Import audio); it is transcribed like any recording")
+  .argument("<audio-file>", "Path to an audio or video file (MP3 uploads as-is; other formats need ffmpeg)")
+  .option("--title <title>", "Title for the new file (default: the file name without extension)")
+  .option("--tag <tagId>", "Put the new file in this tag (see `plaud files tags list`)")
+  .option("--allow-duplicate", "Upload even if a file with the same title already exists", false)
+  .option("--json", "Print JSON")
+  .action(async (audioFile: string, opts: { title?: string; tag?: string; allowDuplicate?: boolean; json?: boolean }) => {
+    const token = await requireToken({ json: !!opts.json });
+    if (!token) return;
+    const { uploadAudioFile } = await import("./upload.js");
+    const { createUploadDeps } = await import("./upload-api.js");
+    try {
+      const result = await uploadAudioFile(
+        audioFile,
+        { title: opts.title, tagId: opts.tag, allowDuplicate: !!opts.allowDuplicate },
+        // eslint-disable-next-line no-console
+        createUploadDeps(token, (msg) => console.error(msg)),
+      );
+      const url = webUrl(result.id);
+      if (opts.json) {
+        printJson(
+          ok({
+            id: result.id,
+            url,
+            tagged: result.tagged,
+            title: result.title,
+            fileType: result.fileType,
+            transcoded: result.transcoded,
+            sizeBytes: result.sizeBytes,
+            parts: result.parts,
+            durationSec: result.durationSec,
+          }),
+        );
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.log(`${result.id}  ${result.title}`);
+      // eslint-disable-next-line no-console
+      console.log(url);
+    } catch (err: any) {
+      process.exitCode = 1;
+      const code = typeof err?.code === "string" && err?.name === "UploadError" ? err.code : undefined;
+      const error = makeError(err, code ? { code } : {});
+      if (code === "UPLOAD_NETWORK_ERROR") error.retryable = true;
+      if (opts.json) {
+        printJson(fail(error));
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.error(`${error.code}: ${error.message}`);
+    }
+  });
+
+filesCmd
   .command("download")
   .description("Download a single recording's transcript/summary/json/audio")
   .argument("<id>", "Recording id")

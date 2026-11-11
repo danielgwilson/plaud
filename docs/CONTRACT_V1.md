@@ -222,6 +222,30 @@ Failure (not found):
 { "ok": false, "error": { "code": "NOT_FOUND", "message": "Recording not found", "retryable": false } }
 ```
 
+### `plaud files upload <audio-file> --json`
+
+Uploads a local file like the web app's Import audio. Progress lines go to stderr. Success:
+```json
+{
+  "ok": true,
+  "data": {
+    "id": "…",
+    "url": "https://web.plaud.ai/file/…",
+    "tagged": false,
+    "title": "interview",
+    "fileType": "MP3",
+    "transcoded": true,
+    "sizeBytes": 7413776,
+    "parts": 2,
+    "durationSec": 847.09
+  }
+}
+```
+
+`durationSec` is `null` when `ffprobe` is not installed (the length check is skipped).
+
+Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`, `TOO_SHORT`, `TOO_LONG`, `FFMPEG_MISSING`, `UPLOAD_NETWORK_ERROR`, `CONFIRM_UNCERTAIN`, `UPLOAD_FAILED`, `FILE_NOT_FOUND`, `INVALID_ARGUMENT`, or `AUTH_MISSING` (exit 2).
+
 ### `plaud files download <id>`
 
 Success:

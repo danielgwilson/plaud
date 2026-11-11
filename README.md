@@ -130,6 +130,20 @@ plaud files link <id>
 
 `files link` prints the recording's Plaud web app URL without calling the API. `files list`, `files get` and `files search` JSON include the same link as `url`.
 
+## Upload a local audio file
+
+```bash
+plaud files upload ./interview.m4a --title "Candidate interview" --json
+```
+
+This does what the Plaud web app's "Import audio" does, so the new file is transcribed and summarized like any recording. Progress goes to stderr; stdout is the result (`--json` gives `id`, `url`, `title`, `sizeBytes`, `parts`, `durationSec`).
+
+- Plaud stores MP3. An `.mp3` uploads as-is. Any other audio or video file (m4a, wav, ogg, opus, mp4, ...) is converted first with the same ffmpeg settings the web app uses (mono, 16 kHz), so **ffmpeg must be installed** (`brew install ffmpeg`). Plaud's native `.asr` files are not supported.
+- Files are sent in 5 MB parts, so a multi-hour recording works. Limits match the web app: up to 500 MB, at least 1 second, at most 5 hours.
+- A file with the same title as an existing one is refused (`DUPLICATE`); pass `--title` to rename it or `--allow-duplicate`. `--tag <tagId>` files it under a tag.
+- Failures return stable codes: `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`, `TOO_SHORT`, `TOO_LONG`, `FFMPEG_MISSING`, `UPLOAD_NETWORK_ERROR`, `CONFIRM_UNCERTAIN` (check `files list` before retrying), `FILE_NOT_FOUND`.
+- Check transcription with `plaud files tasks --file-id <id>`; undo an upload with `plaud files trash <id>`.
+
 ## Speaker labels
 
 ```bash
