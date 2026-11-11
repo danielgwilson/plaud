@@ -206,10 +206,11 @@ plaud files share revoke <id>                                 # remove the publi
 plaud files share remove <id> <recipientId>                   # stop sharing with one person
 ```
 
-- **Private** (`--to <email>`, the default mode): Plaud **emails each recipient** a link that only they can open.
-- **Public** (`--public`, must be explicit): anyone with the URL can open the content, until `--expire` (a date or an RFC3339 time; a bare date means the end of that day in UTC). If the expiry cannot be set, the link is removed again instead of being left open.
+- **Private** (`--to <email>`; repeat or comma-separate): Plaud **emails each recipient** a link that only they can open. You must pick a mode: with neither `--to` nor `--public` the command refuses.
+- **Public** (`--public`, must be explicit): anyone with the URL can open the content, until `--expire` (`2026-12-31` means the end of that day in UTC; a date-time needs `Z` or an offset). The CLI reads the link back to check the expiry took; if it did not, or a create fails midway, it removes the link again and reports `CONFIRM_UNCERTAIN` with `stillShared` in `meta` when it could not confirm. A recording that already has a public link is refused; revoke it first.
+- The public URL is a secret: treat `share create --public` and `share get` output like a password and do not paste it into tickets or chat unless that is the point.
 - `--content` takes `audio`, `transcript`, `summary`, `overview` (comma-separated), and `--note <noteId>` adds specific notes. Highlights are not supported. Recordings in the trash cannot be shared.
-- Without `--yes` the command only prints what it would do. `--json` returns the public `url`.
+- Without `--yes` the command only prints what it would do, including how long the link stays open. A share request is sent once and never retried; if a reply is lost you get `CONFIRM_UNCERTAIN` (not retryable): check `share get` before trying again. `--json` returns the public `url`.
 
 ## Speaker labels
 
