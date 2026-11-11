@@ -1492,7 +1492,7 @@ recordingTagsCmd
         action: "tags.delete",
         deleted: current,
         trashedFileIds: files.map((f) => f.id),
-        note: files.length ? "Plaud moved these files to the trash; bring them back with `plaud files restore <id>...`." : "The folder had no files.",
+        note: files.length ? "Plaud sends these files to the trash within a few seconds; bring them back with `plaud files restore <id>...`." : "The folder had no files.",
       };
     });
   });
