@@ -425,3 +425,19 @@ export async function deleteFolder({ token, id }: { token: string; id: string })
     throw err;
   }
 }
+
+export async function getFileStats({ token }: { token: string }): Promise<any> {
+  const res = await plaudRequest({ token, endpoint: "/user/stat/file" });
+  assertApiOk(res);
+  return res;
+}
+
+/**
+ * The endpoint requires a `notification` type (the web app sends "popup" or "tag" and then POSTs
+ * /user/stat/transcription/quota/notification to record it). We only read: no POST, so no notification state changes.
+ */
+export async function getTranscriptionQuota({ token }: { token: string }): Promise<any> {
+  const res = await plaudRequest({ token, endpoint: "/user/stat/transcription/quota?notification=tag" });
+  assertApiOk(res);
+  return res;
+}

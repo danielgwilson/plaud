@@ -1979,6 +1979,61 @@ storeCmd
     }
   });
 
+const accountCmd = program.command("account").description("Account usage: file statistics and transcription quota");
+
+accountCmd
+  .command("stats")
+  .description("Total files and recorded time, recent activity")
+  .option("--daily", "Include the per-day file counts", false)
+  .option("--json", "Print JSON")
+  .action(async (opts: { daily?: boolean; json?: boolean }) => {
+    const token = await requireToken({ json: !!opts.json });
+    if (!token) return;
+    try {
+      const { getFileStats } = await import("./plaud-api.js");
+      const { summarizeFileStats, formatHours } = await import("./account.js");
+      const stats = summarizeFileStats(await getFileStats({ token }), { daily: !!opts.daily });
+      if (opts.json) {
+        printJson(ok(stats));
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.log(`${stats.totalFiles} files over ${stats.totalDays} active days, ${formatHours(stats.totalDurationMs)} recorded (${formatHours(stats.totalTranscribedDurationMs)} transcribed)`);
+      if (stats.recent30DaysDailyAvgMs !== null) {
+        // eslint-disable-next-line no-console
+        console.log(`Last 30 days: ${formatHours(stats.recent30DaysDailyAvgMs)}/day on average` + (stats.previous30DaysDailyAvgMs !== null ? ` (previous 30 days: ${formatHours(stats.previous30DaysDailyAvgMs)})` : ""));
+      }
+    } catch (err: any) {
+      process.exitCode = 1;
+      if (opts.json) printJson(fail(makeError(err)));
+      else throw err;
+    }
+  });
+
+accountCmd
+  .command("quota")
+  .description("Transcription quota (only plans with a limit report one)")
+  .option("--json", "Print JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const token = await requireToken({ json: !!opts.json });
+    if (!token) return;
+    try {
+      const { getTranscriptionQuota } = await import("./plaud-api.js");
+      const { summarizeQuota } = await import("./account.js");
+      const quota = summarizeQuota(await getTranscriptionQuota({ token }));
+      if (opts.json) {
+        printJson(ok(quota));
+        return;
+      }
+      // eslint-disable-next-line no-console
+      console.log(quota.isStarter ? `Starter plan quota: ${JSON.stringify(quota.quota)}` : "No transcription quota limit reported for this plan.");
+    } catch (err: any) {
+      process.exitCode = 1;
+      if (opts.json) printJson(fail(makeError(err)));
+      else throw err;
+    }
+  });
+
 program
   .command("whoami")
   .description("Fetch the current Plaud user profile")

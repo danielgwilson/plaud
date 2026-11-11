@@ -263,6 +263,10 @@ Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`,
 
 `files tags create|rename|delete` print a JSON envelope: `create` returns `{ action, tag: { id, name, icon, color } }`, `rename` returns `{ action, tag, before }`, `delete` returns `{ action, deleted, trashedFileIds, note }`. A duplicate name returns `error.code` `DUPLICATE` (exit 1); a delete whose outcome cannot be confirmed returns `CONFIRM_UNCERTAIN` (check `files tags list`). Bad input, an ambiguous or unknown folder name, or `delete` without `--yes` returns `VALIDATION` (exit 2).
 
+### `plaud account stats --json` and `plaud account quota --json`
+
+Read-only. `stats` returns `{ totalFiles, totalDays, totalDurationMs, totalTranscribedDurationMs, recent30DaysDailyAvgMs, previous30DaysDailyAvgMs, mostActiveHour, busiestDay }`, plus `daily: [{ day, files, durationMs }]` with `--daily`. `quota` returns `{ isStarter, canNotify, quota }`; `quota` is `null` on plans without a limit.
+
 ### `plaud files download <id>`
 
 Success:
