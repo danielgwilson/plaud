@@ -8,7 +8,9 @@ export type FileStats = {
   recent30DaysDailyAvgMs: number | null;
   previous30DaysDailyAvgMs: number | null;
   mostActiveHour: number | null;
-  busiestDay: { files: number; durationMs: number } | null;
+  // Two separate records: the day with the most files is usually not the day with the most recorded time.
+  maxFilesInOneDay: number | null;
+  maxDurationMsInOneDay: number | null;
   daily?: Array<{ day: string; files: number; durationMs: number }>;
 };
 
@@ -20,6 +22,9 @@ const numOrNull = (v: unknown): number | null => (typeof v === "number" && Numbe
 export function summarizeFileStats(res: any, { daily = false }: { daily?: boolean } = {}): FileStats {
   const s = res?.data_stat;
   if (!s || typeof s !== "object") throw new Error("Plaud returned no file statistics.");
+  if (numOrNull(s.total_files) === null && numOrNull(s.total_duration) === null) {
+    throw new Error("Plaud's file statistics have no totals (the response format may have changed).");
+  }
   const out: FileStats = {
     totalFiles: num(s.total_files),
     totalDays: num(s.total_days),
@@ -29,7 +34,8 @@ export function summarizeFileStats(res: any, { daily = false }: { daily?: boolea
     recent30DaysDailyAvgMs: secToMs(s.recent_30_days_daily_avg),
     previous30DaysDailyAvgMs: secToMs(s.previous_30_days_daily_avg),
     mostActiveHour: numOrNull(s.most_active_hour),
-    busiestDay: numOrNull(s.max_files) === null ? null : { files: num(s.max_files), durationMs: num(s.max_duration) },
+    maxFilesInOneDay: numOrNull(s.max_files),
+    maxDurationMsInOneDay: numOrNull(s.max_duration),
   };
   if (daily) {
     out.daily = (Array.isArray(s.group_result) ? s.group_result : []).map((d: any) => ({ day: String(d?.day ?? ""), files: num(d?.count), durationMs: num(d?.duration) }));

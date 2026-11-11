@@ -1984,7 +1984,7 @@ const accountCmd = program.command("account").description("Account usage: file s
 accountCmd
   .command("stats")
   .description("Total files and recorded time, recent activity")
-  .option("--daily", "Include the per-day file counts", false)
+  .option("--daily", "Include the per-day file counts (JSON output only)", false)
   .option("--json", "Print JSON")
   .action(async (opts: { daily?: boolean; json?: boolean }) => {
     const token = await requireToken({ json: !!opts.json });
@@ -2026,7 +2026,7 @@ accountCmd
         return;
       }
       // eslint-disable-next-line no-console
-      console.log(quota.isStarter ? `Starter plan quota: ${JSON.stringify(quota.quota)}` : "No transcription quota limit reported for this plan.");
+      console.log(quota.isStarter ? `Starter plan quota: ${quota.quota ? JSON.stringify(quota.quota) : "no details reported"}` : "No transcription quota limit reported for this plan.");
     } catch (err: any) {
       process.exitCode = 1;
       if (opts.json) printJson(fail(makeError(err)));

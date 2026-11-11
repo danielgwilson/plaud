@@ -602,6 +602,9 @@ test("account stats and quota normalize the API and never POST", async () => {
     const bad = await runWithFakePlaud(tmp, { ...detail, __stat: undefined }, ["--json"], {}, ["account", "stats"]);
     assert.equal(bad.exitCode, 1);
     assert.equal(JSON.parse(bad.stdout).ok, false);
+    const badQuota = await runWithFakePlaud(tmp, { ...detail, __quota: { status: -1, msg: "Invalid notification type" } }, ["--json"], {}, ["account", "quota"]);
+    assert.equal(badQuota.exitCode, 1);
+    assert.match(JSON.parse(badQuota.stdout).error.message, /Invalid notification/);
   });
 });
 
