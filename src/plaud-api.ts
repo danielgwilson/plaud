@@ -51,6 +51,7 @@ export async function plaudRequest({
   body,
   timeoutMs = 30_000,
   retries = 4,
+  headers: extraHeaders,
 }: {
   token: string;
   endpoint: string;
@@ -58,6 +59,7 @@ export async function plaudRequest({
   body?: unknown;
   timeoutMs?: number;
   retries?: number;
+  headers?: Record<string, string>;
 }): Promise<any> {
   const url = `${BASE_URL}${endpoint}`;
   const headers: Record<string, string> = {
@@ -71,6 +73,7 @@ export async function plaudRequest({
     origin: "https://app.plaud.ai",
     referer: "https://app.plaud.ai/",
     "user-agent": BROWSER_USER_AGENT,
+    ...extraHeaders,
   };
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -328,6 +331,29 @@ export async function patchFile({
     method: "PATCH",
     body,
   });
+  assertApiOk(res);
+  return res;
+}
+
+export async function renameFile({ token, fileId, body }: { token: string; fileId: string; body: Record<string, unknown> }): Promise<any> {
+  return await patchFile({ token, fileId, body });
+}
+
+export async function listNotes({ token, fileId }: { token: string; fileId: string }): Promise<any[]> {
+  if (!fileId) throw new Error("Missing file id");
+  const res = await plaudRequest({ token, endpoint: "/ai/query_note", headers: { "file-id": fileId } });
+  assertApiOk(res);
+  return Array.isArray(res?.data) ? res.data : [];
+}
+
+export async function updateNote({ token, body }: { token: string; body: Record<string, unknown> }): Promise<any> {
+  const res = await plaudRequest({ token, endpoint: "/ai/update_note_info", method: "POST", body, retries: 1 });
+  assertApiOk(res);
+  return res;
+}
+
+export async function deleteNote({ token, body }: { token: string; body: Record<string, unknown> }): Promise<any> {
+  const res = await plaudRequest({ token, endpoint: "/ai/del_note_info", method: "POST", body, retries: 1 });
   assertApiOk(res);
   return res;
 }

@@ -187,8 +187,10 @@ async function runWithFakePlaud(
       "globalThis.fetch = async (url, init = {}) => {",
       '  const method = init.method || "GET";',
       "  const body = init.body ? JSON.parse(init.body) : null;",
-      "  fs.appendFileSync(process.env.FAKE_PLAUD_LOG, JSON.stringify({ method, url: String(url), body }) + \"\\n\");",
-      '  const json = method === "PATCH" ? { status: 0 } : { status: 0, data_file_list: [detail] };',
+      "  fs.appendFileSync(process.env.FAKE_PLAUD_LOG, JSON.stringify({ method, url: String(url), body, headers: init.headers || {} }) + \"\\n\");",
+      '  let json = method === "PATCH" ? { status: 0 } : { status: 0, data_file_list: [detail] };',
+      '  if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
+      '  else if (String(url).includes("/ai/update_note_info") || String(url).includes("/ai/del_note_info")) json = { status: 0 };',
       '  return { ok: true, status: 200, statusText: "OK", json: async () => json };',
       "};",
       "",
@@ -207,8 +209,8 @@ async function runWithFakePlaud(
   const requests = (await fs.readFile(logPath, "utf8"))
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as { method: string; url: string; body: any });
-  return { ...r, requests, writes: requests.filter((q) => q.method === "PATCH") };
+    .map((line) => JSON.parse(line) as { method: string; url: string; body: any; headers: Record<string, string> });
+  return { ...r, requests, writes: requests.filter((q) => q.method === "PATCH"), posts: requests.filter((q) => q.method === "POST") };
 }
 
 function syntheticRecording(speakers: [string, string][] = [["Speaker 1", "Speaker 1"], ["Speaker 2", "Speaker 2"], ["Speaker 1", "Speaker 1"]]) {
@@ -399,6 +401,101 @@ test("files upload --json reports a missing file before any network call", async
     const r = await runCli(["files", "upload", path.join(tmp, "nope.mp3"), "--json"], { XDG_CONFIG_HOME: tmp, PLAUD_AUTH_TOKEN: "x" });
     assert.equal(r.exitCode, 1);
     assert.equal(JSON.parse(r.stdout).error.code, "FILE_NOT_FOUND");
+  });
+});
+
+test("files rename sends the web app's title edit body", async () => {
+  await withTempDir(async (tmp) => {
+    const r = await runWithFakePlaud(tmp, syntheticRecording(), ["rec-1", "Board review"], {}, ["files", "rename"]);
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(r.writes.length, 1);
+    assert.match(r.writes[0].url, /\/file\/rec-1$/);
+    assert.deepEqual(r.writes[0].body, { filename: "Board review", extra_data: { actionData: { hasTitleEdit: true } } });
+    assert.equal(JSON.parse(r.stdout).data.url, "https://web.plaud.ai/file/rec-1");
+    const empty = await runWithFakePlaud(tmp, syntheticRecording(), ["rec-1", "  "], {}, ["files", "rename"]);
+    assert.equal(empty.exitCode, 2);
+    assert.equal(empty.writes.length, 0);
+  });
+});
+
+test("files transcript edit and replace write the expected body, guard versions, and validate input", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording(), trans_result: [{ content: "alpha beta", speaker: "Speaker 1" }, { content: "second", speaker: "Speaker 2" }] };
+    const run = (args: string[], cmd: string[]) => runWithFakePlaud(tmp, detail, args, {}, ["files", "transcript", cmd[0]]);
+
+    const edit = await run(["rec-1", "--segment", "1", "--text", "changed"], ["edit"]);
+    assert.equal(edit.exitCode, 0, edit.stderr);
+    assert.equal(edit.writes.length, 1);
+    assert.deepEqual(edit.writes[0].body.trans_result.map((x: any) => x.content), ["alpha beta", "changed"]);
+    assert.equal(edit.writes[0].body.trans_result[1].speaker, "Speaker 2");
+    assert.equal(JSON.parse(edit.stdout).data.versionRead, 7);
+
+    const guarded = await run(["rec-1", "--segment", "1", "--text", "x", "--expect-text", "stale"], ["edit"]);
+    assert.equal(guarded.exitCode, 2);
+    assert.equal(guarded.writes.length, 0);
+
+    const wrongVersion = await run(["rec-1", "--segment", "0", "--text", "x", "--expect-version", "99"], ["edit"]);
+    assert.equal(wrongVersion.exitCode, 2);
+    assert.match(JSON.parse(wrongVersion.stdout).error.message, /version is 7, expected 99/);
+    assert.equal(wrongVersion.writes.length, 0);
+
+    for (const seg of ["", "1e1", "0x1", "-1", "abc"]) {
+      const bad = await run(["rec-1", "--segment", seg, "--text", "x"], ["edit"]);
+      assert.equal(bad.exitCode, 2, `segment ${JSON.stringify(seg)}`);
+      assert.equal(bad.writes.length, 0);
+    }
+
+    const dry = await run(["rec-1", "--find", "beta", "--with", "gamma", "--dry-run"], ["replace"]);
+    assert.equal(dry.writes.length, 0, "dry run writes nothing");
+    assert.equal(JSON.parse(dry.stdout).data.changed, 1);
+
+    const real = await run(["rec-1", "--find", "beta", "--with", "gamma"], ["replace"]);
+    assert.equal(real.writes.length, 1);
+    assert.equal(real.writes[0].body.trans_result[0].content, "alpha gamma");
+    assert.equal(real.writes[0].body.support_mul_summ, true);
+
+    const noop = await run(["rec-1", "--find", "beta", "--with", "beta"], ["replace"]);
+    assert.equal(noop.writes.length, 0, "identical replacement is not a write");
+  });
+});
+
+test("files notes list sends the file-id header; set and delete post the expected bodies", async () => {
+  await withTempDir(async (tmp) => {
+    const notes = [
+      { data_id: "sum-1", data_type: "auto_sum_note", data_title: "Summary", data_content: "old summary" },
+      { data_id: "note-2", data_type: "mark_note", data_title: "My note", data_content: "old text" },
+    ];
+    const detail = { ...syntheticRecording(), __notes: notes };
+    const run = (args: string[], sub: string) => runWithFakePlaud(tmp, detail, args, {}, ["files", "notes", sub]);
+
+    const listed = await run(["rec-1"], "list");
+    assert.equal(listed.exitCode, 0, listed.stderr);
+    assert.equal(JSON.parse(listed.stdout).data.count, 2);
+    const q = listed.requests.find((x) => x.url.endsWith("/ai/query_note"));
+    assert.equal(q?.headers["file-id"], "rec-1");
+
+    const set = await run(["rec-1", "note-2", "--title", "Renamed", "--content", "new text"], "set");
+    assert.equal(set.exitCode, 0, set.stderr);
+    const upd = set.posts.find((x) => x.url.endsWith("/ai/update_note_info"));
+    assert.deepEqual(upd?.body, { file_id: "rec-1", note_id: "note-2", note_type: "mark_note", note_title: "Renamed", note_content: "new text" });
+    assert.deepEqual(JSON.parse(set.stdout).data.before, { title: "My note", content: "old text" });
+
+    const dry = await run(["rec-1", "note-2", "--content", "x", "--dry-run"], "set");
+    assert.equal(dry.posts.filter((x) => x.url.endsWith("/ai/update_note_info")).length, 0);
+
+    const summaryTitle = await run(["rec-1", "sum-1", "--title", "Nope"], "set");
+    assert.equal(summaryTitle.exitCode, 2);
+    const missingFile = await run(["rec-1", "note-2", "--file", path.join(tmp, "missing.md")], "set");
+    assert.equal(missingFile.exitCode, 2);
+
+    const del = await run(["rec-1", "note-2"], "delete");
+    assert.equal(del.exitCode, 0, del.stderr);
+    assert.deepEqual(del.posts.find((x) => x.url.endsWith("/ai/del_note_info"))?.body, { note_id: "note-2", note_type: "mark_note", note_content: "old text" });
+    assert.equal(JSON.parse(del.stdout).data.deleted.title, "My note");
+
+    const delSummary = await run(["rec-1", "sum-1"], "delete");
+    assert.equal(delSummary.exitCode, 2);
+    assert.equal(delSummary.posts.filter((x) => x.url.endsWith("/ai/del_note_info")).length, 0);
   });
 });
 
