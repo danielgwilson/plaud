@@ -1215,6 +1215,155 @@ filesCmd
     }
   });
 
+// ---- Edit a recording: title, transcript text, summary and notes ----
+
+async function runEdit(fn: () => Promise<unknown>): Promise<void> {
+  const { EditInputError } = await import("./edit.js");
+  try {
+    printJson(ok(await fn()));
+  } catch (err: any) {
+    if (err instanceof EditInputError) {
+      process.exitCode = 2;
+      printJson(fail(makeError(null, { code: "VALIDATION", message: err.message })));
+      return;
+    }
+    process.exitCode = 1;
+    printJson(fail(makeError(err)));
+  }
+}
+
+async function readRecording(token: string, id: string): Promise<any> {
+  const { getRecordingDetailsBatch } = await import("./plaud-api.js");
+  const list = await getRecordingDetailsBatch({ token, ids: [id] });
+  const details = Array.isArray(list) ? list.find((d: any) => String(d?.id || "") === String(id)) : null;
+  if (!details) {
+    const err: any = new Error("Recording not found (or details unavailable).");
+    err.status = 404;
+    throw err;
+  }
+  return details;
+}
+
+filesCmd
+  .command("rename")
+  .description("Change a recording's title")
+  .argument("<id>", "Recording id")
+  .argument("<title>", "New title")
+  .option("--json", "Print JSON")
+  .action(async (id: string, title: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { buildRenameBody } = await import("./edit.js");
+      const { renameFile } = await import("./plaud-api.js");
+      const body = buildRenameBody(title);
+      const res = await renameFile({ token, fileId: id, body });
+      return { id, action: "files.rename", title: body.filename, url: webUrl(id), response: { status: res?.status ?? null } };
+    });
+  });
+
+const transcriptCmd = filesCmd.command("transcript").description("Edit transcript text");
+
+transcriptCmd
+  .command("edit")
+  .description("Replace the text of one transcript segment (speaker and timing are kept)")
+  .argument("<id>", "Recording id")
+  .requiredOption("--segment <n>", "Zero-based segment index (see `files get --json`, trans_result)", (v) => Number(v))
+  .requiredOption("--text <text>", "New text for the segment")
+  .option("--dry-run", "Show the change without writing it", false)
+  .option("--json", "Print JSON")
+  .action(async (id: string, opts: { segment: number; text: string; dryRun?: boolean }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { planSegmentEdit } = await import("./edit.js");
+      const { patchFile } = await import("./plaud-api.js");
+      const details = await readRecording(token, id);
+      const plan = planSegmentEdit(details.trans_result, opts.segment, opts.text);
+      if (!opts.dryRun && plan.changed > 0) await patchFile({ token, fileId: id, body: { trans_result: plan.segments, support_mul_summ: true } });
+      return { id, action: "files.transcript.edit", dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
+    });
+  });
+
+transcriptCmd
+  .command("replace")
+  .description("Find and replace literal text across the transcript")
+  .argument("<id>", "Recording id")
+  .requiredOption("--find <text>", "Text to find (exact, case-sensitive)")
+  .requiredOption("--with <text>", "Replacement text")
+  .option("--dry-run", "Show the changes without writing them", false)
+  .option("--json", "Print JSON")
+  .action(async (id: string, opts: { find: string; with: string; dryRun?: boolean }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { planTranscriptReplace } = await import("./edit.js");
+      const { patchFile } = await import("./plaud-api.js");
+      const details = await readRecording(token, id);
+      const plan = planTranscriptReplace(details.trans_result, opts.find, opts.with);
+      if (!opts.dryRun && plan.changed > 0) await patchFile({ token, fileId: id, body: { trans_result: plan.segments, support_mul_summ: true } });
+      return { id, action: "files.transcript.replace", dryRun: !!opts.dryRun, written: !opts.dryRun && plan.changed > 0, changed: plan.changed, changes: plan.changes };
+    });
+  });
+
+const notesCmd = filesCmd.command("notes").description("Read and edit a recording's summary and notes");
+
+notesCmd
+  .command("list")
+  .description("List a recording's summary and notes (ids, titles, content)")
+  .argument("<id>", "Recording id")
+  .option("--json", "Print JSON")
+  .action(async (id: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { listNotes } = await import("./plaud-api.js");
+      const notes = await listNotes({ token, fileId: id });
+      return { id, count: notes.length, notes };
+    });
+  });
+
+notesCmd
+  .command("set")
+  .description("Edit a note's title or text (the summary is a note too)")
+  .argument("<id>", "Recording id")
+  .argument("<noteId>", "Note id from `files notes list`")
+  .option("--title <title>", "New note title")
+  .option("--content <text>", "New note text (markdown)")
+  .option("--file <path>", "Read the new note text from a file")
+  .option("--json", "Print JSON")
+  .action(async (id: string, noteId: string, opts: { title?: string; content?: string; file?: string }) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { buildNoteUpdateBody, findNote, EditInputError } = await import("./edit.js");
+      const { listNotes, updateNote } = await import("./plaud-api.js");
+      if (opts.content !== undefined && opts.file !== undefined) throw new EditInputError("Pass --content or --file, not both.");
+      const content = opts.file !== undefined ? await fs.readFile(path.resolve(opts.file), "utf8") : opts.content;
+      const note = findNote(await listNotes({ token, fileId: id }), noteId);
+      const res = await updateNote({ token, body: buildNoteUpdateBody(id, note, { title: opts.title, content }) });
+      return { id, noteId, action: "files.notes.set", response: { status: res?.status ?? null } };
+    });
+  });
+
+notesCmd
+  .command("delete")
+  .description("Delete a note or summary from a recording")
+  .argument("<id>", "Recording id")
+  .argument("<noteId>", "Note id from `files notes list`")
+  .option("--json", "Print JSON")
+  .action(async (id: string, noteId: string) => {
+    const token = await requireToken({ json: true });
+    if (!token) return;
+    await runEdit(async () => {
+      const { buildNoteDeleteBody, findNote } = await import("./edit.js");
+      const { listNotes, deleteNote } = await import("./plaud-api.js");
+      const note = findNote(await listNotes({ token, fileId: id }), noteId);
+      const res = await deleteNote({ token, body: buildNoteDeleteBody(note) });
+      return { id, noteId, action: "files.notes.delete", response: { status: res?.status ?? null } };
+    });
+  });
+
 const recordingTagsCmd = filesCmd.command("tags").description("Manage tags on files");
 
 recordingTagsCmd

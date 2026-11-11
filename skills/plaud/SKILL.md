@@ -41,6 +41,7 @@ Hard filters and tidy result lists are not proof of completeness:
 - Speaker labels (per recording): `plaud files speakers list <id> --json` and `plaud files speakers rename <id> --from "Speaker 2" --to "Person A"`
 - Apply a whole speaker assignment in one write: `plaud files speakers apply <id> --map '{"Speaker 1":"Person A","Speaker 2":"Person B"}' --dry-run`, then drop `--dry-run`; it keeps names already typed, rewrites the summary labels, and accepts `--expect-version <n>` (see `versionRead`) to avoid overwriting a recording that changed. To fix a wrong name in the summary text, add `--summary-map '{"Wrong Name":"Speaker 2","Wrong":"Speaker 2"}'` (whole words; works on its own).
 - Re-run transcript/summary: `plaud files rerun <id> --wait`
+- Edit a recording (writes to the account, so only on files the user asked you to change): `plaud files rename <id> "Title"`, `plaud files transcript replace <id> --find X --with Y --dry-run`, `plaud files transcript edit <id> --segment <n> --text "..."`, `plaud files notes list <id> --json` then `plaud files notes set <id> <noteId> --file summary.md`. Use `--dry-run` first on transcript edits.
 
 ## Recall-first search workflow
 

@@ -144,6 +144,20 @@ This does what the Plaud web app's "Import audio" does, so the new file is trans
 - Failures return stable codes: `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`, `TOO_SHORT`, `TOO_LONG`, `FFMPEG_MISSING`, `UPLOAD_NETWORK_ERROR`, `CONFIRM_UNCERTAIN` (check `files list` before retrying), `FILE_NOT_FOUND`.
 - Check transcription with `plaud files tasks --file-id <id>`; undo an upload with `plaud files trash <id>`.
 
+## Edit a recording
+
+```bash
+plaud files rename <id> "Candidate interview"
+plaud files transcript edit <id> --segment 0 --text "Corrected sentence." --dry-run
+plaud files transcript replace <id> --find "Plod" --with "Plaud"
+plaud files notes list <id> --json
+plaud files notes set <id> <noteId> --file summary.md
+```
+
+- `rename` changes the title, like editing it in the web app.
+- `transcript edit` replaces the text of one segment (zero-based index; the `trans_result` array in `files get --json`). `transcript replace` is a literal, case-sensitive find and replace across all segments. Both keep speaker names and timings, and `--dry-run` shows the change without writing it.
+- `notes list` shows the summary and any other notes with their ids. `notes set` changes a note's text (the summary is a note); the summary's title is fixed by Plaud. `notes delete` removes a note, but Plaud refuses to delete the auto summary. To regenerate a summary instead, use `plaud files rerun <id> --wait`.
+
 ## Speaker labels
 
 ```bash

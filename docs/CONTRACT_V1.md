@@ -246,6 +246,16 @@ Uploads a local file like the web app's Import audio. Progress lines go to stder
 
 Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`, `TOO_SHORT`, `TOO_LONG`, `FFMPEG_MISSING`, `UPLOAD_NETWORK_ERROR`, `CONFIRM_UNCERTAIN`, `UPLOAD_FAILED`, `FILE_NOT_FOUND`, `INVALID_ARGUMENT`, or `AUTH_MISSING` (exit 2).
 
+### Edit commands
+
+`files rename <id> <title>`, `files transcript edit|replace <id>`, and `files notes list|set|delete <id>` always print a JSON envelope.
+
+```json
+{ "ok": true, "data": { "id": "…", "action": "files.transcript.replace", "dryRun": false, "written": true, "changed": 1, "changes": [{ "index": 0, "before": "…", "after": "…" }] } }
+```
+
+`files rename` returns `{ id, action, title, url, response }`; `files notes list` returns `{ id, count, notes }` where each note has `data_id`, `data_type`, `data_title`, `data_content`. Invalid input (empty title, missing segment or note) returns `error.code` `VALIDATION` with exit 2.
+
 ### `plaud files download <id>`
 
 Success:

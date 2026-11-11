@@ -402,6 +402,32 @@ test("files upload --json reports a missing file before any network call", async
   });
 });
 
+test("files rename and files transcript replace send the expected PATCH bodies", async () => {
+  await withTempDir(async (tmp) => {
+    const detail = { ...syntheticRecording(), trans_result: [{ content: "alpha beta", speaker: "Speaker 1" }] };
+    const renamed = await runWithFakePlaud(tmp, detail, ["rec-1", "Board review"], {}, ["files", "rename"]);
+    assert.equal(renamed.exitCode, 0, renamed.stderr);
+    assert.equal(renamed.writes.length, 1);
+    assert.match(renamed.writes[0].url, /\/file\/rec-1$/);
+    assert.deepEqual(renamed.writes[0].body, { filename: "Board review", extra_data: { actionData: { hasTitleEdit: true } } });
+    assert.equal(JSON.parse(renamed.stdout).data.url, "https://web.plaud.ai/file/rec-1");
+
+    const dry = await runWithFakePlaud(tmp, detail, ["rec-1", "--find", "beta", "--with", "gamma", "--dry-run"], {}, ["files", "transcript", "replace"]);
+    assert.equal(dry.writes.length, 0, "dry run writes nothing");
+    assert.equal(JSON.parse(dry.stdout).data.changed, 1);
+
+    const real = await runWithFakePlaud(tmp, detail, ["rec-1", "--find", "beta", "--with", "gamma"], {}, ["files", "transcript", "replace"]);
+    assert.equal(real.writes.length, 1);
+    assert.equal(real.writes[0].body.trans_result[0].content, "alpha gamma");
+    assert.equal(real.writes[0].body.support_mul_summ, true);
+
+    const bad = await runWithFakePlaud(tmp, detail, ["rec-1", "--segment", "4", "--text", "x"], {}, ["files", "transcript", "edit"]);
+    assert.equal(bad.exitCode, 2);
+    assert.equal(JSON.parse(bad.stdout).error.code, "VALIDATION");
+    assert.equal(bad.writes.length, 0);
+  });
+});
+
 test("store status --json works without auth", async () => {
   await withTempDir(async (tmp) => {
     const r = await runCli(["store", "status", "--json"], {
