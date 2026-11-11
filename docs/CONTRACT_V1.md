@@ -15,6 +15,9 @@ Note: `plaud recordings …` is supported as an alias for `plaud files …`.
   - `plaud files restore`
   - `plaud files tags add`
   - `plaud files tags clear`
+  - `plaud files tags create`
+  - `plaud files tags rename`
+  - `plaud files tags delete`
   - `plaud files rerun`
   - `plaud files speakers rename`
   - `plaud files speakers apply`
@@ -255,6 +258,10 @@ Failure: `error.code` is one of `DUPLICATE`, `INVALID_FORMAT`, `FILE_TOO_LARGE`,
 ```
 
 `files rename` returns `{ id, action, title, url, response }`; `files notes list` returns `{ id, count, notes }` where each note has `data_id`, `data_type`, `data_title`, `data_content`. Invalid input (empty title, bad or missing segment or note, `--expect-version` or `--expect-text` mismatch, unreadable `--file`, changing the summary's title, deleting the auto summary) returns `error.code` `VALIDATION` with exit 2. Transcript commands return `versionRead`; `notes set` returns `before`, `notes delete` returns `deleted`.
+
+### Folder commands
+
+`files tags create|rename|delete` print a JSON envelope: `create` returns `{ action, tag: { id, name, icon, color } }`, `rename` returns `{ action, tag, before }`, `delete` returns `{ action, deleted, trashedFileIds, note }`. A duplicate name returns `error.code` `DUPLICATE` (exit 1); a delete whose outcome cannot be confirmed returns `CONFIRM_UNCERTAIN` (check `files tags list`). Bad input, an ambiguous or unknown folder name, or `delete` without `--yes` returns `VALIDATION` (exit 2).
 
 ### `plaud files download <id>`
 

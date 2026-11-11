@@ -357,3 +357,71 @@ export async function deleteNote({ token, body }: { token: string; body: Record<
   assertApiOk(res);
   return res;
 }
+
+// The API reports a duplicate folder name as status -2, either in a 200 body or as an HTTP error.
+const isDuplicateFolder = (x: any) => x?.status === -2 || x?.data?.status === -2;
+
+export class FolderDuplicateError extends Error {
+  constructor() {
+    super("A folder with that name already exists.");
+    this.name = "FolderDuplicateError";
+  }
+}
+
+async function folderWrite(req: Parameters<typeof plaudRequest>[0]): Promise<any> {
+  let res: any;
+  try {
+    res = await plaudRequest(req);
+  } catch (err: any) {
+    if (isDuplicateFolder(err)) throw new FolderDuplicateError();
+    throw err;
+  }
+  if (isDuplicateFolder(res)) throw new FolderDuplicateError();
+  assertApiOk(res);
+  return res;
+}
+
+export async function createFolder({ token, body }: { token: string; body: { name: string; icon: string; color: string } }): Promise<PlaudTag> {
+  const res = await folderWrite({ token, endpoint: "/filetag/", method: "POST", body, retries: 0 });
+  const tag = res?.data_filetag;
+  if (!tag?.id) throw new Error("Plaud did not return the new folder.");
+  return tag as PlaudTag;
+}
+
+export async function updateFolder({ token, id, body }: { token: string; id: string; body: { name: string; icon: string; color: string } }): Promise<any> {
+  return await folderWrite({ token, endpoint: `/filetag/${encodeURIComponent(id)}`, method: "PATCH", body, retries: 1 });
+}
+
+/** Files (not already in the trash) that sit in a folder. Deleting the folder sends these to the trash. */
+export async function listFilesInFolder({ token, id }: { token: string; id: string }): Promise<Array<{ id: string; name: string }>> {
+  const files = await listRecordings({ token });
+  return files
+    .filter((f: any) => Array.isArray(f?.filetag_id_list) && f.filetag_id_list.map(String).includes(String(id)))
+    .map((f: any) => ({ id: String(f.id), name: String(f.filename || "") }));
+}
+
+export class FolderDeleteUncertainError extends Error {
+  constructor(detail: string) {
+    super(`Plaud did not confirm the deletion (${detail}), and the folder list could not settle it. Run \`plaud files tags list\` to check.`);
+    this.name = "FolderDeleteUncertainError";
+  }
+}
+
+/** One DELETE, never retried: a retry after a lost reply would say "not found" for a delete that worked. */
+export async function deleteFolder({ token, id }: { token: string; id: string }): Promise<any> {
+  try {
+    const res = await plaudRequest({ token, endpoint: `/filetag/${encodeURIComponent(id)}`, method: "DELETE", retries: 0 });
+    assertApiOk(res);
+    return res;
+  } catch (err: any) {
+    // The reply may have been lost after the delete went through. The folder list is the source of truth.
+    let remaining: PlaudTag[];
+    try {
+      remaining = await listTags({ token });
+    } catch {
+      throw new FolderDeleteUncertainError(err?.message || "request failed");
+    }
+    if (!remaining.some((t) => String(t.id) === String(id))) return { status: 0, msg: "folder already gone" };
+    throw err;
+  }
+}

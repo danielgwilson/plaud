@@ -189,7 +189,13 @@ async function runWithFakePlaud(
       "  const body = init.body ? JSON.parse(init.body) : null;",
       "  fs.appendFileSync(process.env.FAKE_PLAUD_LOG, JSON.stringify({ method, url: String(url), body, headers: init.headers || {} }) + \"\\n\");",
       '  let json = method === "PATCH" ? { status: 0 } : { status: 0, data_file_list: [detail] };',
-      '  if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
+      '  if (detail.__fail && (method + " " + new URL(String(url)).pathname).startsWith(detail.__fail)) { return { ok: false, status: 500, statusText: "boom", json: async () => ({ detail: "boom" }) }; }',
+      '  const hasDeleted = fs.readFileSync(process.env.FAKE_PLAUD_LOG, "utf8").includes(\'"method":"DELETE"\');',
+      '  if (String(url).endsWith("/filetag/") && method === "GET") json = { status: 0, data_filetag_list: detail.__goneAfterDelete && hasDeleted ? [] : detail.__tags || [] };',
+      '  else if (String(url).endsWith("/filetag/") && method === "POST") json = detail.__dup ? { status: -2, msg: "exists" } : { status: 0, data_filetag: { id: "new-tag", ...body } };',
+      '  else if (String(url).includes("/filetag/")) json = detail.__dup ? { status: -2 } : { status: 0 };',
+      '  else if (String(url).includes("/file/simple/web") && detail.__files) json = { status: 0, data_file_list: detail.__files };',
+      '  else if (String(url).endsWith("/ai/query_note")) json = { status: 0, data: detail.__notes || [] };',
       '  else if (String(url).includes("/ai/update_note_info") || String(url).includes("/ai/del_note_info")) json = { status: 0 };',
       '  return { ok: true, status: 200, statusText: "OK", json: async () => json };',
       "};",
@@ -496,6 +502,68 @@ test("files notes list sends the file-id header; set and delete post the expecte
     const delSummary = await run(["rec-1", "sum-1"], "delete");
     assert.equal(delSummary.exitCode, 2);
     assert.equal(delSummary.posts.filter((x) => x.url.endsWith("/ai/del_note_info")).length, 0);
+  });
+});
+
+test("files tags create, rename and delete send the expected bodies and guard deletion", async () => {
+  await withTempDir(async (tmp) => {
+    const tags = [
+      { id: "t1", name: "Interviews", icon: "e675", color: "#c149eb" },
+      { id: "t2", name: "Interviews", icon: "e675", color: "#c149eb" },
+      { id: "t3", name: "Board", icon: "e64a", color: "#ffaa5c" },
+    ];
+    const detail = { ...syntheticRecording(), __tags: tags };
+    const run = (sub: string, args: string[], d: any = detail) => runWithFakePlaud(tmp, d, args, {}, ["files", "tags", sub]);
+
+    const created = await run("create", ["Hiring", "--color", "#ABCDEF"]);
+    assert.equal(created.exitCode, 0, created.stderr);
+    const post = created.requests.find((x) => x.method === "POST" && x.url.endsWith("/filetag/"));
+    assert.deepEqual(post?.body, { name: "Hiring", icon: "e674", color: "#abcdef" });
+    assert.equal(JSON.parse(created.stdout).data.tag.id, "new-tag");
+
+    const dup = await run("create", ["Hiring"], { ...detail, __dup: true });
+    assert.equal(JSON.parse(dup.stdout).error.code, "DUPLICATE");
+    assert.equal(dup.exitCode, 1);
+    const dupRename = await run("rename", ["Board", "--name", "Interviews2"], { ...detail, __dup: true });
+    assert.equal(JSON.parse(dupRename.stdout).error.code, "DUPLICATE");
+
+    const flaky = await run("create", ["Hiring"], { ...detail, __fail: "POST /filetag/" });
+    assert.equal(flaky.exitCode, 1);
+    assert.equal(flaky.requests.filter((x) => x.method === "POST").length, 1, "create is never retried");
+
+    const lostReply = await run("delete", ["Board", "--yes"], { ...detail, __fail: "DELETE /filetag/", __goneAfterDelete: true });
+    assert.equal(lostReply.exitCode, 0, lostReply.stderr);
+    assert.equal(lostReply.requests.filter((x) => x.method === "DELETE").length, 1);
+    const stillThere = await run("delete", ["Board", "--yes"], { ...detail, __fail: "DELETE /filetag/" });
+    assert.equal(stillThere.exitCode, 1);
+
+    assert.equal((await run("create", ["x", "--color", "red"])).exitCode, 2);
+    assert.equal((await run("create", ["  "])).exitCode, 2);
+
+    const renamed = await run("rename", ["Board", "--name", "Board 2026"]);
+    assert.equal(renamed.exitCode, 0, renamed.stderr);
+    const patch = renamed.requests.find((x) => x.method === "PATCH");
+    assert.match(patch!.url, /\/filetag\/t3$/);
+    assert.deepEqual(patch!.body, { name: "Board 2026", icon: "e64a", color: "#ffaa5c" });
+
+    const ambiguous = await run("rename", ["interviews", "--name", "x"]);
+    assert.equal(ambiguous.exitCode, 2);
+    assert.match(JSON.parse(ambiguous.stdout).error.message, /More than one folder/);
+    assert.equal(ambiguous.requests.filter((x) => x.method === "PATCH").length, 0);
+    assert.equal((await run("rename", ["Board"])).exitCode, 2, "nothing to change");
+
+    const withFiles = { ...detail, __files: [{ id: "f1", filename: "Board call", filetag_id_list: ["t3"] }, { id: "f2", filename: "Other", filetag_id_list: ["t1"] }] };
+    const noYes = await run("delete", ["Board"], withFiles);
+    assert.equal(noYes.exitCode, 2);
+    assert.match(JSON.parse(noYes.stdout).error.message, /1 file\(s\) to the trash: "Board call"/);
+    assert.equal(noYes.requests.filter((x) => x.method === "DELETE").length, 0);
+    const yes = await run("delete", ["t3", "--yes"], withFiles);
+    assert.equal(yes.exitCode, 0, yes.stderr);
+    assert.deepEqual(JSON.parse(yes.stdout).data.trashedFileIds, ["f1"]);
+    assert.equal(yes.requests.filter((x) => x.method === "DELETE").length, 1, "delete is sent once");
+    const del = yes.requests.find((x) => x.method === "DELETE");
+    assert.match(del!.url, /\/filetag\/t3$/);
+    assert.equal(JSON.parse(yes.stdout).data.deleted.name, "Board");
   });
 });
 
